@@ -1,0 +1,43 @@
+# sketch2photo — базовые настройки
+#
+# Приоритет значений:
+#   1) аргументы командной строки  (--prompt, ...)
+#   2) этот файл                  (config.yaml)
+#   3) встроенные дефолты скрипта
+#
+# Путь к файлу можно переопределить: --config ./my.yaml
+
+# --- Промпт для генерации (многострочный через |) ---
+prompt: |
+  Photorealistic render based on the provided sketch. Keep the exact same composition, geometry, proportions and scale of every object. Replace any silhouette scale figures with a real standing person in casual clothing (jeans, t-shirt) for human scale. Soft natural daylight, architectural photography, ultra-detailed, 8k, magazine quality. No watermarks, no logos, no text, no captions, no signatures, no letters, no words anywhere in the image. Clean editorial photograph without any overlay text.
+
+# --- Имена выходных файлов ---
+# итоговое имя: <имя_входа><suffix>_ГГГГММДД_ЧЧММСС.<ext>
+suffix: _photorealistic
+ext: jpg
+
+# --- Папки ---
+in: ./in
+out: ./out
+
+# --- Unsloth Studio (локальный движок) ---
+# Запуск студии: unsloth studio --api-only -H 127.0.0.1 -p 8888
+# Модель загружается из кэша (скачана один раз).
+# Размер генерации = точный размер эскиза (кратно 16; при нехватке VRAM
+# скрипт сам уменьшает разрешение, сохраняя пропорции).
+unsloth_url: http://127.0.0.1:8888
+unsloth_key: sk-unsloth-c5f72f87e8cb225f7e0e35fe282ff571
+unsloth_model: unsloth/flux-3-image-klein-GGUF
+unsloth_gguf: flux-3-image-klein-UD-Q4_K_XL.gguf
+# distilled klein: строго 4 шага, guidance 1.0 (больше шагов — «пережар»)
+unsloth_steps: 4
+unsloth_guidance: 1.0
+# --- Как тумблеры UI ---
+# allow_oversized = "Allow oversized generations": выполнять генерацию, даже если
+# оценка VRAM говорит, что размер не влезет (иначе студия отвечает 400 и скрипт
+# уменьшает разрешение). Может упереться в OOM или медленно считать через RAM.
+unsloth_allow_oversized: true
+# memory_mode = политика памяти при загрузке модели (аналог "CPU offload AUTO: ON"):
+# auto / fast / balanced / low_vram. balanced = скорость почти как resident,
+# но заметно меньше VRAM.
+unsloth_memory_mode: balanced

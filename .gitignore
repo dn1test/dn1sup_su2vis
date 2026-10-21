@@ -1,0 +1,6 @@
+*.rbz
+.zcode/
+frontend/node_modules/
+in/
+out/
+dist/

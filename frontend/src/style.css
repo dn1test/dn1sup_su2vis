@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { height: 100%; }
+body { @apply bg-slate-100 text-slate-900 text-sm; }
+
+/* Скрытые стильные скроллбары: полоса видна только во время прокрутки
+   (класс .scrolling ставит JS) или при наведении. */
+.scroll-slim { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.scroll-slim.scrolling { scrollbar-color: rgba(100, 116, 139, 0.55) transparent; }
+.scroll-slim::-webkit-scrollbar { width: 6px; height: 6px; }
+.scroll-slim::-webkit-scrollbar-track { background: transparent; }
+.scroll-slim::-webkit-scrollbar-button { display: none; }
+.scroll-slim::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.scroll-slim.scrolling::-webkit-scrollbar-thumb,
+.scroll-slim:hover::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.45); }
+.scroll-slim::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.75); }
