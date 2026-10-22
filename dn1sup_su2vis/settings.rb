@@ -16,14 +16,20 @@ module Dn1sup
       PROJECT_DIRNAME = 'su2vis'
       PROJECT_FILENAME = 'su2vis.json'
 
-      # Только ключ — глобальный (машинный). Остальное — в папке проекта.
-      GLOBAL_KEYS = %w[unsloth_key].freeze
+      # Только ключ, автозапуск и путь бинарника — глобальные (машинные).
+      # Остальное — в папке проекта.
+      GLOBAL_KEYS = %w[unsloth_key unsloth_autostart unsloth_cmd].freeze
 
       DEFAULTS = {
         'prompt' => 'Photorealistic render based on the provided sketch. Keep the exact same composition, geometry, proportions and scale of every object. Replace any silhouette scale figures with a real standing person in casual clothing (jeans, t-shirt) for human scale. Soft natural daylight, architectural photography, ultra-detailed, 8k, magazine quality. No watermarks, no logos, no text, no captions, no signatures, no letters, no words anywhere in the image. Clean editorial photograph without any overlay text.',
         'seed' => -1,
         'seed_locked' => false,
         'sketch_preset' => '1024x768',
+        'sketch_source' => 'hd',
+        'sketch_thin_lines' => true,
+        'sketch_hide_dims' => true,
+        'sketch_autocrop' => false,
+        'sketch_white_bg' => false,
         'preview_preset' => '256',
         'preview_variants' => 1,
         'preview_max' => 256,
@@ -32,7 +38,8 @@ module Dn1sup
         'final_w' => 2048,
         'final_h' => 1536,
         'final_upscale' => 0.0,
-        'workflow' => 'auto',
+        'workflow' => 'edit',
+        'geometry_lock' => true,
         'enhance_prompt' => true,
         'name_template' => '{scene}{suffix}_{date}',
         'strength' => 1.0,
@@ -46,6 +53,8 @@ module Dn1sup
         'ext' => 'jpg',
         'unsloth_url' => 'http://127.0.0.1:8888',
         'unsloth_key' => '',
+        'unsloth_autostart' => true,
+        'unsloth_cmd' => 'unsloth',
         'unsloth_model' => 'unsloth/flux-3-image-klein-GGUF',
         'unsloth_gguf' => 'flux-3-image-klein-UD-Q4_K_XL.gguf'
       }.freeze
@@ -114,6 +123,21 @@ module Dn1sup
         }
       end
 
+      # Только klein: модель, файл, шаги и guidance зафиксированы.
+      # Остальное (промпт, сила, размеры) — per-file как раньше.
+      KLEIN_MODEL = 'unsloth/flux-3-image-klein-GGUF'.freeze
+      KLEIN_GGUF = 'flux-3-image-klein-UD-Q4_K_XL.gguf'.freeze
+
+      def force_klein!(h)
+        h['unsloth_model'] = KLEIN_MODEL
+        h['unsloth_gguf'] = KLEIN_GGUF if h['unsloth_gguf'].to_s.empty?
+        h['steps'] = 4
+        h['guidance'] = 1.0
+        h['workflow'] = coerce('workflow', h['workflow'])
+        h['memory_mode'] = 'balanced'
+        h
+      end
+
       def all(dir = :auto)
         d = dir == :auto ? project_dir : dir
         if !d.nil? && File.file?(project_settings_path(d))
@@ -138,7 +162,7 @@ module Dn1sup
         h['project_dir'] = info['project_dir']
         h['model_name'] = info['model_name']
         h['version'] = Dn1sup::Su2vis::VERSION
-        h
+        force_klein!(h)
       end
 
       def save(hash, dir = :auto)
@@ -245,11 +269,24 @@ module Dn1sup
       end
 
       def coerce(key, value)
-        case key
+        case key.to_s
+        when 'unsloth_model' then KLEIN_MODEL
+        when 'unsloth_gguf' then value.to_s.empty? ? KLEIN_GGUF : value.to_s
+        when 'steps' then 4
+        when 'guidance' then 1.0
+        when 'workflow'
+          s = value.to_s.strip.downcase
+          %w[auto edit reference].include?(s) ? s : 'edit'
+        when 'memory_mode' then 'balanced'
         when 'seed' then value.to_i
-        when 'seed_locked', 'allow_oversized', 'enhance_prompt', 'use_scenes', 'use_mixins' then value == true || value.to_s == 'true'
-        when 'preview_max', 'steps', 'final_w', 'final_h', 'preview_variants' then value.to_i
-        when 'strength', 'guidance', 'final_upscale', 'final_strength' then value.to_f
+        when 'seed_locked', 'allow_oversized', 'enhance_prompt', 'use_scenes', 'use_mixins',
+             'sketch_thin_lines', 'sketch_hide_dims', 'sketch_autocrop', 'sketch_white_bg',
+             'unsloth_autostart', 'geometry_lock' then value == true || value.to_s == 'true'
+        when 'unsloth_cmd' then value.to_s.strip.empty? ? 'unsloth' : value.to_s.strip
+        when 'sketch_source' then %w[hd view preset].include?(value.to_s) ? value.to_s : 'hd'
+        when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1024x768'
+        when 'preview_max', 'final_w', 'final_h', 'preview_variants' then value.to_i
+        when 'strength', 'final_upscale', 'final_strength' then value.to_f
         else value.to_s
         end
       end

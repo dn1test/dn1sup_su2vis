@@ -24,12 +24,7 @@ GGUF_FILE = 'flux-3-image-klein-UD-Q4_K_XL.gguf'
 MEMORY_MODE = CFG['unsloth_memory_mode'] || 'balanced'
 ALLOW_OVERSIZED = CFG.fetch('unsloth_allow_oversized', true)
 MODELS = [
-  { label: 'k3_s4_str100', steps: 4, guidance: 1.0, strength: 1.00 },
-  { label: 'k3_s4_str75',  steps: 4, guidance: 1.0, strength: 0.75 },
-  { label: 'k3_s6_str100', steps: 6, guidance: 1.0, strength: 1.00 },
-  { label: 'k3_s6_str75',  steps: 6, guidance: 1.0, strength: 0.75 },
-  { label: 'k3_s8_str100', steps: 8, guidance: 1.0, strength: 1.00 },
-  { label: 'k3_s8_str75',  steps: 8, guidance: 1.0, strength: 0.75 }
+  { label: 'k3_s4_str100', steps: 4, guidance: 1.0, strength: 1.00 }
 ].map { |m| m.merge(model: MODEL_ID, gguf: GGUF_FILE) }.freeze
 
 def api

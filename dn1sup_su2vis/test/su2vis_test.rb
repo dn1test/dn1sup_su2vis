@@ -40,6 +40,7 @@ module Dn1sup
         assert(Scenes.respond_to?(:update_camera), 'нет Scenes.update_camera')
         assert(Jobs.respond_to?(:enqueue), 'нет Jobs.enqueue')
         assert(Jobs.respond_to?(:cancel), 'нет Jobs.cancel')
+        assert(Jobs.respond_to?(:pump_start), 'нет Jobs.pump_start')
         assert(Gallery.respond_to?(:list), 'нет Gallery.list')
         assert(Gallery.respond_to?(:remove), 'нет Gallery.remove')
         assert(Gallery.respond_to?(:save_preview), 'нет Gallery.save_preview')
@@ -49,15 +50,20 @@ module Dn1sup
         assert(Mixins.respond_to?(:update), 'нет Mixins.update')
         assert(Mixins.respond_to?(:remove), 'нет Mixins.remove')
         assert(Client.respond_to?(:mixins_prompt), 'нет Client.mixins_prompt')
+        assert(Studio.respond_to?(:ensure_async), 'нет Studio.ensure_async')
+        assert(Studio.respond_to?(:ensure_running!), 'нет Studio.ensure_running!')
+        assert(Studio.respond_to?(:state), 'нет Studio.state')
         assert(Panel.respond_to?(:show), 'нет Panel.show')
         assert(Panel.respond_to?(:parse_payload), 'нет Panel.parse_payload')
       end
 
-      test 'проект: только ключ глобальный, остальное per-file' do
-        assert_equal(%w[unsloth_key], Settings::GLOBAL_KEYS)
-        assert(!Settings::PROJECT_KEYS.include?('unsloth_key'), 'ключ не должен лежать в файле проекта')
+      test 'проект: только машинные ключи глобальные, остальное per-file' do
+        assert_equal(%w[unsloth_key unsloth_autostart unsloth_cmd], Settings::GLOBAL_KEYS)
+        %w[unsloth_key unsloth_autostart unsloth_cmd].each do |k|
+          assert(!Settings::PROJECT_KEYS.include?(k), "#{k} не должен лежать в файле проекта")
+        end
         assert(Settings::PROJECT_KEYS.include?('prompt'), 'промпт должен быть per-file')
-        assert_equal((Settings::DEFAULTS.keys - %w[unsloth_key]).sort, Settings::PROJECT_KEYS.sort)
+        assert_equal((Settings::DEFAULTS.keys - %w[unsloth_key unsloth_autostart unsloth_cmd]).sort, Settings::PROJECT_KEYS.sort)
       end
 
       test 'проект: папка su2vis/ рядом с моделью' do
@@ -84,6 +90,8 @@ module Dn1sup
           assert(File.directory?(File.join(proj, 'out')), 'out не создан')
           doc = JSON.parse(File.read(File.join(proj, 'su2vis.json'), encoding: 'UTF-8'))
           assert(!doc.key?('unsloth_key'), 'ключ не должен лежать в файле проекта')
+          assert(!doc.key?('unsloth_autostart'), 'autostart не должен лежать в файле проекта')
+          assert(!doc.key?('unsloth_cmd'), 'cmd не должен лежать в файле проекта')
           assert(doc.key?('prompt'), 'промпт должен быть в файле проекта')
           # save в готовый проект пишет только файл, ключ/global не трогаем:
           # в hash нет глобальных ключей и out_dir — defaults не пишутся.
@@ -283,6 +291,10 @@ module Dn1sup
         assert(content.include?('Удалить файл'), 'panel.html без иконки удаления — устаревшая сборка')
         assert(content.include?('Выделить / повернуть'), 'panel.html без редактора выделения — устаревшая сборка')
         assert(content.include?('Только выделение'), 'panel.html без тумблера выделения — устаревшая сборка')
+        assert(content.include?('Квантование GGUF'), 'panel.html без выбора квантования klein — устаревшая сборка')
+        assert(content.include?('Эскиз-референс'), 'panel.html без настроек эскиза-референса — устаревшая сборка')
+        assert(content.include?('скрыть размеры'), 'panel.html без тумблера размеров — устаревшая сборка')
+        assert(content.include?('автообрезка'), 'panel.html без тумблера автокропа — устаревшая сборка')
         assert(content.include?('toggle-enabled'), 'panel.html без выключателей колонок — устаревшая сборка')
         assert(content.include?('только по промпту'), 'panel.html без режима только-промпт — устаревшая сборка')
         assert(content.include?('Показать оригинал'), 'panel.html без просмотра оригинала — устаревшая сборка')
@@ -349,21 +361,46 @@ module Dn1sup
         assert_equal(1.0, Client.norm_strength(1.0))
       end
 
-      test 'client: preset_for klein даёт 4 шага, остальным — дефолт студии' do
+      test 'client: workflow auto не шлётся (студия 422: только edit/reference/outpaint)' do
+        assert(Client.normalize_workflow('auto').nil?, 'auto должен стать nil')
+        assert(Client.normalize_workflow('').nil?, 'пусто должен стать nil')
+        assert(Client.normalize_workflow(nil).nil?, 'nil должен остаться nil')
+        assert(Client.normalize_workflow('мусор').nil?, 'мусор должен стать nil')
+        assert_equal('reference', Client.normalize_workflow('reference'), 'reference проходит')
+        assert_equal('reference', Client.normalize_workflow('Reference'), 'регистр нормализуется')
+        assert_equal('edit', Client.normalize_workflow('edit'), 'edit проходит')
+        assert_equal('outpaint', Client.normalize_workflow('outpaint'), 'outpaint проходит')
+        assert(Client.preset_for['workflow'].nil?, "preset workflow должен быть nil: #{Client.preset_for.inspect}")
+        assert(Client::KLEIN_WORKFLOW.nil?, 'KLEIN_WORKFLOW должен быть nil')
+      end
+
+      test 'client: preset_for всегда klein 4/1.0 (другие модели не поддерживаются)' do
         klein = Client.preset_for('unsloth/flux-3-image-klein-GGUF')
         assert_equal(4, klein['steps'], "klein steps: #{klein.inspect}")
         assert_equal(1.0, klein['guidance'], "klein guidance: #{klein.inspect}")
         assert_equal('balanced', klein['memory_mode'], "klein memory: #{klein.inspect}")
-        klein2 = Client.preset_for('unsloth/FLUX.2-klein-9B-GGUF')
-        assert_equal(4, klein2['steps'], "flux2-klein steps: #{klein2.inspect}")
-        qwen = Client.preset_for('Qwen-Image-GGUF')
-        assert_equal(50, qwen['steps'], "qwen steps: #{qwen.inspect}")
-        assert_equal('low_vram', qwen['memory_mode'], "qwen memory: #{qwen.inspect}")
-        # LLM без image-семьи — не klein
-        llm = Client.preset_for('unsloth/Qwen3.8-27B-GGUF', { 'steps' => 16, 'guidance' => 1.0 })
-        assert_equal(16, llm['steps'], "fallback steps: #{llm.inspect}")
-        assert_equal('дефолт студии', llm['source'], "fallback source: #{llm.inspect}")
-        assert(llm['memory_mode'].nil?, 'fallback память не трогаем')
+        assert_equal(2048, klein['max_side'], "klein max_side: #{klein.inspect}")
+        # даже чужой id даёт klein — выбор моделей убран
+        other = Client.preset_for('Qwen-Image-GGUF', { 'steps' => 50, 'guidance' => 4.0 })
+        assert_equal(4, other['steps'], "чужой id всё равно klein: #{other.inspect}")
+        assert_equal(1.0, other['guidance'], "чужой id всё равно klein: #{other.inspect}")
+        assert_equal(Client::KLEIN_REPO, 'unsloth/flux-3-image-klein-GGUF')
+        assert_equal(Client::KLEIN_GGUF, 'flux-3-image-klein-UD-Q4_K_XL.gguf')
+      end
+
+      test 'только klein: coerce фиксирует модель/шаги' do
+        assert_equal('unsloth/flux-3-image-klein-GGUF', Settings.coerce('unsloth_model', 'мусор'))
+        assert_equal('flux-3-image-klein-UD-Q4_K_XL.gguf', Settings.coerce('unsloth_gguf', ''))
+        # квант внутри klein-репо сохраняется (Q8_0 уже скачан в студии)
+        assert_equal('flux-3-image-klein-Q8_0.gguf', Settings.coerce('unsloth_gguf', 'flux-3-image-klein-Q8_0.gguf'))
+        assert_equal('flux-3-image-klein-Q6_K.gguf', Settings.coerce('unsloth_gguf', 'flux-3-image-klein-Q6_K.gguf'))
+        assert_equal(4, Settings.coerce('steps', 50))
+        assert_equal(1.0, Settings.coerce('guidance', 7.0))
+        assert_equal('edit', Settings.coerce('workflow', 'manual'))
+        assert_equal('edit', Settings.coerce('workflow', 'EDIT'))
+        assert_equal('reference', Settings.coerce('workflow', 'reference'))
+        assert_equal('auto', Settings.coerce('workflow', 'auto'))
+        assert_equal('balanced', Settings.coerce('memory_mode', 'low_vram'))
       end
 
       test 'client: pick_variant берёт точный файл, сначала скачанный' do
@@ -434,6 +471,52 @@ module Dn1sup
       test 'jobs: cancel несуществующей задачи — вежливый отказ' do
         r = Jobs.cancel('no-such-job')
         assert_equal(false, r[:ok])
+      end
+
+      test 'jobs: GVL-памп стартует один раз и останавливается' do
+        Jobs.pump_stop
+        assert_equal(false, Jobs.pump_active?, 'после stop неактивен')
+        id1 = Jobs.pump_start
+        assert(!id1.nil?, 'старт должен вернуть id таймера')
+        assert_equal(true, Jobs.pump_active?, 'после start активен')
+        id2 = Jobs.pump_start
+        assert_equal(id1, id2, 'повторный старт — тот же таймер')
+        Jobs.pump_stop
+        assert_equal(false, Jobs.pump_active?, 'после stop неактивен')
+        Jobs.pump_stop
+        assert_equal(false, Jobs.pump_active?, 'двойной stop без ошибки')
+      end
+
+      test 'client: abort закрывает соединение задачи (реестр http_id)' do
+        assert_equal(false, Client.abort('no-such-http'), 'пустой реестр — false')
+        fake = Object.new
+        finished = []
+        fake.define_singleton_method(:finish) { finished << true }
+        Client.register_http('j1', fake)
+        assert_equal(true, Client.abort('j1'), 'живое соединение — true')
+        assert_equal([true], finished, 'finish не вызван')
+        assert_equal(false, Client.abort('j1'), 'повторный abort — false')
+        Client.register_http('', fake)
+        assert_equal(false, Client.abort(''), 'пустой id не регистрируется')
+      end
+
+      test 'client: generate снимает http с учёта после запроса (стаб)' do
+        fake = Object.new
+        fake.define_singleton_method(:request) { |_req| raise 'стоп-тест' }
+        orig_api = Client.method(:api)
+        Client.define_singleton_method(:api) { |_url| fake }
+        begin
+          begin
+            Client.generate('http://127.0.0.1:9', 'k', nil, prompt: 'p', width: 256, height: 256,
+                            http_id: 'reg-test')
+            assert(false, 'generate должен был дойти до HTTP')
+          rescue RuntimeError => e
+            raise unless e.message == 'стоп-тест'
+          end
+        ensure
+          Client.define_singleton_method(:api, orig_api)
+        end
+        assert_equal(false, Client.abort('reg-test'), 'соединение осталось в реестре после запроса')
       end
 
       test 'log: append/tail/clear через временный файл' do
@@ -659,6 +742,70 @@ module Dn1sup
         assert(Scenes.method(:capture_all).parameters.include?([:key, :hd]), 'у capture_all нет hd:')
       end
 
+      test 'эскиз-референс: настройки съёма по умолчанию и coerce' do
+        assert_equal('hd', Settings::DEFAULTS['sketch_source'], 'дефолт sketch_source')
+        assert_equal(true, Settings::DEFAULTS['sketch_thin_lines'], 'дефолт thin_lines')
+        assert_equal(true, Settings::DEFAULTS['sketch_hide_dims'], 'дефолт hide_dims')
+        assert(Settings::PROJECT_KEYS.include?('sketch_source'), 'sketch_source должен быть per-file')
+        assert_equal('view', Settings.coerce('sketch_source', 'view'))
+        assert_equal('preset', Settings.coerce('sketch_source', 'preset'))
+        assert_equal('hd', Settings.coerce('sketch_source', 'мусор'), 'мусор — hd')
+        assert_equal('1024x768', Settings.coerce('sketch_preset', '1024x768'))
+        assert_equal('1024x768', Settings.coerce('sketch_preset', 'мусор'), 'чужой пресет — дефолт')
+        assert_equal(false, Settings.coerce('sketch_thin_lines', false))
+        assert_equal(true, Settings.coerce('sketch_hide_dims', 'true'))
+        assert_equal(false, Settings::DEFAULTS['sketch_autocrop'], 'дефолт autocrop выкл')
+        assert(Settings::PROJECT_KEYS.include?('sketch_autocrop'), 'sketch_autocrop должен быть per-file')
+        assert_equal(true, Settings.coerce('sketch_autocrop', true))
+        assert_equal(false, Settings.coerce('sketch_autocrop', '0'))
+      end
+
+      test 'эскиз-референс: capture/capture_all принимают параметры съёма' do
+        assert(Scenes.method(:capture).parameters.include?([:key, :thin_lines]), 'у capture нет thin_lines:')
+        assert(Scenes.method(:capture).parameters.include?([:key, :hide_dims]), 'у capture нет hide_dims:')
+        assert(Scenes.method(:capture_all).parameters.include?([:key, :sketch]), 'у capture_all нет sketch:')
+        assert(Scenes.method(:with_dims_hidden).parameters.include?([:key, :hide_dims]), 'у with_dims_hidden нет hide_dims:')
+      end
+
+      test 'автокроп: рамка контента на синтетике и roundtrip' do
+        require 'zlib'
+        bg = [200, 200, 200]
+        mk = lambda do |w, h, fg|
+          raw = +''.b
+          h.times do |yy|
+            raw << 0.chr
+            w.times do |xx|
+              inside = fg && xx >= fg[0] && xx < fg[0] + fg[2] && yy >= fg[1] && yy < fg[1] + fg[3]
+              raw << (inside ? [40, 40, 40] : bg).pack('C3')
+            end
+          end
+          chunk = lambda do |type, data|
+            d = data.b
+            [d.bytesize].pack('N') + type + d + [Zlib.crc32(type + d)].pack('N')
+          end
+          "\x89PNG\r\n\x1A\n".b + chunk.call('IHDR', [w, h, 8, 2, 0, 0, 0].pack('NNC5')) +
+            chunk.call('IDAT', Zlib.deflate(raw)) + chunk.call('IEND', '')
+        end
+        pic = mk.call(64, 48, [10, 8, 30, 20])
+        assert_equal([10, 8, 30, 20], Scenes.content_bbox(pic), 'рамка контента')
+        assert(Scenes.content_bbox(mk.call(32, 32, nil)).nil?, 'пустой кадр — nil')
+        assert(Scenes.png_pixels('мусор'.b).nil?, 'мусор — nil')
+        assert(Scenes.crop_png(pic, [-1, 0, 10, 10]).nil?, 'кроп мимо кадра — nil')
+        out = Scenes.crop_png(pic, [10, 8, 30, 20])
+        dec = Scenes.png_pixels(out)
+        assert_equal([30, 20], [dec[:w], dec[:h]], 'размер кропа')
+        assert_equal([40, 40, 40], dec[:rows][0][0, 3], 'контент на месте')
+        Dir.mktmpdir do |d|
+          f = File.join(d, 'sk.png')
+          File.binwrite(f, pic)
+          assert_equal(f, Scenes.maybe_autocrop(f, false), 'выкл — тот же путь')
+          got = Scenes.autocrop(f, 0.05)
+          assert_equal(f, got, 'тот же путь после кропа')
+          # поля 5%: mx=2, my=1 -> [8, 7, 34, 22]
+          assert_equal([34, 22], Scenes.dims(f), "размер с полями: #{Scenes.dims(f).inspect}")
+        end
+      end
+
       test 'scenes: тумбы 170x128 с тонкими линиями' do
         assert_equal(170, Scenes::THUMB_W)
         assert_equal(128, Scenes::THUMB_H)
@@ -735,6 +882,170 @@ module Dn1sup
 
         list = Scenes.list
         assert(list.is_a?(Array), 'list должен вернуть массив')
+      end
+
+      test 'enhance: старт мгновенный, опрос доводит до done (стаб-воркер)' do
+        assert(Enhance.respond_to?(:start), 'нет Enhance.start')
+        assert(Enhance.respond_to?(:poll), 'нет Enhance.poll')
+        prev_worker = Enhance.worker
+        Enhance.worker = ->(_url, _key, _prompt, _ref) { 'капшн-стаб' }
+        begin
+          t0 = Time.now
+          task = Enhance.start('http://127.0.0.1:9', 'k', 'промпт', 'ref')
+          assert(Time.now - t0 < 5, 'старт должен вернуться сразу, без сети')
+          assert_equal('running', task['status'], 'старт — running')
+          assert(!task['id'].to_s.empty?, 'нет id задачи')
+          done = nil
+          100.times do
+            done = Enhance.poll(task['id'])
+            break if done['status'] != 'running'
+            sleep 0.05
+          end
+          assert_equal('done', done['status'], "задача не done: #{done.inspect}")
+          assert_equal('капшн-стаб', done['text'], 'текст воркера потерян')
+        ensure
+          Enhance.worker = prev_worker
+        end
+      end
+
+      test 'enhance: ошибка воркера — статус error, чужой id — вежливый отказ' do
+        prev_worker = Enhance.worker
+        Enhance.worker = ->(_url, _key, _prompt, _ref) { raise 'студия упала' }
+        begin
+          task = Enhance.start('http://127.0.0.1:9', 'k', 'p', '')
+          err = nil
+          100.times do
+            err = Enhance.poll(task['id'])
+            break if err['status'] != 'running'
+            sleep 0.05
+          end
+          assert_equal('error', err['status'], "статус не error: #{err.inspect}")
+          assert(err['error'].to_s.include?('студия упала'), "текст ошибки потерян: #{err.inspect}")
+        ensure
+          Enhance.worker = prev_worker
+        end
+        miss = Enhance.poll('no-such-enhance')
+        assert_equal('error', miss['status'], 'чужой id должен дать error')
+      end
+
+      test 'студия: дефолты автозапуска и coerce' do
+        assert_equal(true, Settings::DEFAULTS['unsloth_autostart'], 'дефолт autostart')
+        assert_equal('unsloth', Settings::DEFAULTS['unsloth_cmd'], 'дефолт cmd')
+        assert_equal(true, Settings.coerce('unsloth_autostart', true))
+        assert_equal(false, Settings.coerce('unsloth_autostart', 'false'))
+        assert_equal(true, Settings.coerce('unsloth_autostart', 'true'))
+        assert_equal('unsloth', Settings.coerce('unsloth_cmd', ''))
+        assert_equal('unsloth', Settings.coerce('unsloth_cmd', nil))
+        assert_equal('C:/tools/unsloth.exe', Settings.coerce('unsloth_cmd', 'C:/tools/unsloth.exe'))
+      end
+
+      test 'студия: parse_host_port и headless-команда' do
+        assert_equal(['127.0.0.1', 8888], Studio.parse_host_port('http://127.0.0.1:8888'))
+        assert_equal(['192.168.1.5', 9999], Studio.parse_host_port('http://192.168.1.5:9999'))
+        assert_equal(['127.0.0.1', 8888], Studio.parse_host_port('мусор'))
+        assert_equal('unsloth studio --api-only -H 127.0.0.1 -p 8888',
+                     Studio.command('http://127.0.0.1:8888', 'unsloth'))
+        assert_equal('unsloth studio --api-only -H 127.0.0.1 -p 8888',
+                     Studio.command('http://127.0.0.1:8888', ''))
+        assert_equal('"C:/my tools/unsloth.exe" studio --api-only -H 127.0.0.1 -p 8888',
+                     Studio.command('http://127.0.0.1:8888', 'C:/my tools/unsloth.exe'))
+      end
+
+      test 'студия: живой сервер не спавнит процесс' do
+        orig_reachable = Studio.method(:reachable?)
+        orig_status = Client.method(:status)
+        spawned = []
+        Studio.spawner = ->(cmd) { spawned << cmd; true }
+        Studio.reset_state!
+        Studio.define_singleton_method(:reachable?) { |_url| true }
+        Client.define_singleton_method(:status) { |_url, _key| { 'loaded' => true } }
+        begin
+          res = Studio.ensure_running!('http://127.0.0.1:8888', 'k', 'unsloth', 5)
+          assert_equal(true, res[:ok], "результат: #{res.inspect}")
+          assert_equal(true, res[:already], 'должен признать уже запущенную')
+          assert(spawned.empty?, "спавн при живом сервере: #{spawned.inspect}")
+          assert_equal('running', Studio.state['status'], 'состояние running')
+        ensure
+          Studio.define_singleton_method(:reachable?, orig_reachable)
+          Client.define_singleton_method(:status, orig_status)
+          Studio.spawner = nil
+          Studio.reset_state!
+        end
+      end
+
+      test 'студия: ensure_async мгновенный, дубль не стартует' do
+        orig_running = Studio.method(:ensure_running!)
+        calls = []
+        Studio.define_singleton_method(:ensure_running!) do |*args|
+          calls << args
+          sleep 0.3
+          { ok: true, already: false, state: Studio.state }
+        end
+        Studio.reset_state!
+        begin
+          t0 = Time.now
+          first = Studio.ensure_async('http://127.0.0.1:8888', 'k', 'unsloth', 5)
+          assert(Time.now - t0 < 5, 'ensure_async должен вернуться сразу')
+          assert_equal(true, first[:ok], "первый: #{first.inspect}")
+          second = Studio.ensure_async('http://127.0.0.1:8888', 'k', 'unsloth', 5)
+          assert_equal(false, second[:started], "дубль при живом потоке: #{second.inspect}")
+          sleep 0.5
+          assert_equal(1, calls.size, "потоков должно быть один: #{calls.size}")
+        ensure
+          Studio.define_singleton_method(:ensure_running!, orig_running)
+          Studio.reset_state!
+        end
+      end
+
+      test 'точность линий: замок геометрии дописывается один раз' do
+        assert_equal(true, Settings::DEFAULTS['geometry_lock'], 'дефолт замка')
+        assert_equal(false, Settings.coerce('geometry_lock', false))
+        assert_equal(true, Settings.coerce('geometry_lock', 'true'))
+        assert(Settings::PROJECT_KEYS.include?('geometry_lock'), 'geometry_lock должен быть per-file')
+        base = 'modern kitchen'
+        locked = Client.apply_geometry_lock(base, true)
+        assert(locked.include?(base), 'исходный промпт потерян')
+        assert(locked.include?(Client::GEOMETRY_LOCK_TEXT), 'замок не дописан')
+        assert_equal(locked, Client.apply_geometry_lock(locked, true), 'двойной замок')
+        assert_equal(base, Client.apply_geometry_lock(base, false), 'выкл — без дописки')
+        assert_equal(Client::GEOMETRY_LOCK_TEXT, Client.apply_geometry_lock('', true), 'пустой промпт — один замок')
+      end
+
+      test 'точность линий: generate шлёт замок + workflow edit' do
+        bodies = []
+        fake = Object.new
+        fake.define_singleton_method(:request) do |req|
+          bodies << JSON.parse(req.body)
+          raise 'стоп-тест'
+        end
+        orig_api = Client.method(:api)
+        Client.define_singleton_method(:api) { |_url| fake }
+        begin
+          Dir.mktmpdir do |d|
+            sk = File.join(d, 'sk.png')
+            File.binwrite(sk, "\x89PNG\r\n\x1A\n".b + 'x' * 16)
+            begin
+              Client.generate('http://127.0.0.1:9', 'k', sk, prompt: 'kitchen', width: 256, height: 256,
+                              workflow: 'edit', geometry_lock: true, strength: 0.4)
+              assert(false, 'generate должен был дойти до HTTP')
+            rescue RuntimeError => e
+              raise unless e.message == 'стоп-тест'
+            end
+          end
+        ensure
+          Client.define_singleton_method(:api, orig_api)
+        end
+        b = bodies.first
+        assert_equal('edit', b['workflow'], "workflow потерян: #{b.inspect}")
+        assert(b['prompt'].include?(Client::GEOMETRY_LOCK_TEXT), 'замок не ушёл в студию')
+        assert_equal(0.4, b['strength'], 'strength не ушёл в студию')
+      end
+
+      test 'панель: enhance опрашивается (enhance_poll в сборке)' do
+        html = File.join(__dir__, '..', 'resources', 'panel.html')
+        skip('нет собранной панели') unless File.file?(html)
+        content = File.read(html, encoding: 'UTF-8')
+        assert(content.include?('enhance_poll'), 'panel.html без опроса enhance — устаревшая сборка')
       end
     end
   end

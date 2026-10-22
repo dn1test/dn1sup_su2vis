@@ -47,6 +47,32 @@
       <div class="text-xs text-slate-400">Улучшить промпт (FLUX-апсемплер): что реально уйдёт в модель.</div>
       <div class="border rounded p-2 space-y-2">
         <div class="flex items-center justify-between">
+          <span class="text-xs font-medium">Точность линий</span>
+        </div>
+        <label class="block">
+          <span class="text-xs text-slate-500">Режим привязки к эскизу</span>
+          <select :value="modelValue.workflow || 'edit'" @change="upd('workflow', $event.target.value)"
+            class="mt-1 w-full border rounded p-1.5 text-xs">
+            <option value="edit">edit — точнее держит геометрию</option>
+            <option value="reference">reference — свободнее, живописнее</option>
+            <option value="auto">auto — решает студия</option>
+          </select>
+        </label>
+        <div class="text-xs text-slate-400">edit шлёт эскиз как правку (линии на месте), reference — как образец (может увести).</div>
+        <label class="block">
+          <span class="flex items-center justify-between text-xs"><span class="font-medium">Свобода модели (превью)</span><span>{{ modelValue.strength }}</span></span>
+          <input type="range" min="0.05" max="1" step="0.05" :value="modelValue.strength"
+            @input="upd('strength', +$event.target.value)" class="w-full accent-slate-900" />
+        </label>
+        <div class="text-xs text-slate-400">Ниже = точнее линии (0.3–0.5 калька, 0.6–0.8 баланс, 1.0 почти с нуля).</div>
+        <label class="flex items-start gap-2">
+          <input type="checkbox" class="mt-0.5" :checked="modelValue.geometry_lock !== false" @change="upd('geometry_lock', $event.target.checked)" />
+          <span class="text-xs"><span class="font-medium">Замок геометрии</span><br />
+          <span class="text-slate-400">Дописывает запрет двигать стены/окна/двери и менять камеру. Выкл — только если модель «прилипает» и не даёт красоты.</span></span>
+        </label>
+      </div>
+      <div class="border rounded p-2 space-y-2">
+        <div class="flex items-center justify-between">
           <span class="text-xs font-medium">Предпросмотр Enhance</span>
         </div>
         <div v-if="enhancePreview && enhancePreview.loading" class="text-xs text-slate-500">Апсемплер пишет капшн… (~5–10с)</div>
@@ -102,18 +128,12 @@
           <input type="range" min="0.05" max="1" step="0.05" :value="modelValue.final_strength"
             @input="upd('final_strength', +$event.target.value)" class="w-full accent-slate-900" />
         </label>
+        <div class="text-xs text-slate-400">Сила доделки превью в финал: 0.2–0.35 держит линии, 0.5+ меняет геометрию.</div>
       </div>
       <div class="space-y-2">
-        <label class="block">
-          <span class="flex items-center justify-between text-xs"><span class="font-medium">Steps</span><span>{{ modelValue.steps }}</span></span>
-          <input type="range" min="1" max="8" step="1" :value="modelValue.steps"
-            @input="upd('steps', +$event.target.value)" class="w-full accent-slate-900" />
-        </label>
-        <label class="block">
-          <span class="flex items-center justify-between text-xs"><span class="font-medium">Guidance</span><span>{{ modelValue.guidance }}</span></span>
-          <input type="range" min="0" max="5" step="0.5" :value="modelValue.guidance"
-            @input="upd('guidance', +$event.target.value)" class="w-full accent-slate-900" />
-        </label>
+        <div class="text-xs border rounded p-2 bg-slate-50 text-slate-600">
+          Модель klein distilled: steps 4 · guidance 1.0 (фиксировано)
+        </div>
         <label class="block">
           <span class="flex items-center justify-between text-xs"><span class="font-medium">Batch size</span><span>{{ modelValue.preview_variants }}</span></span>
           <input type="range" min="1" max="4" step="1" :value="Number(modelValue.preview_variants) || 1"
@@ -161,21 +181,15 @@
         </label>
       </div>
       <label class="block">
-        <span class="text-xs text-slate-500">Strength: {{ modelValue.strength }}</span>
+        <span class="text-xs text-slate-500">Strength превью (дубль блока «Точность линий»): {{ modelValue.strength }}</span>
         <input type="range" min="0.05" max="1" step="0.05" :value="modelValue.strength"
           @input="upd('strength', +$event.target.value)" class="w-full" />
       </label>
       <div class="grid grid-cols-2 gap-2">
-        <label class="block">
-          <span class="text-xs text-slate-500">Память</span>
-          <select :value="modelValue.memory_mode" @change="upd('memory_mode', $event.target.value)"
-            class="mt-1 w-full border rounded p-1.5">
-            <option value="auto">auto</option>
-            <option value="fast">fast</option>
-            <option value="balanced">balanced</option>
-            <option value="low_vram">low_vram</option>
-          </select>
-        </label>
+        <div class="block">
+          <span class="text-xs text-slate-500">Память (klein: balanced)</span>
+          <div class="mt-1 w-full border rounded p-1.5 bg-slate-50 text-xs text-slate-600">balanced</div>
+        </div>
         <label class="flex items-end gap-2 pb-1">
           <input type="checkbox" :checked="modelValue.allow_oversized" @change="upd('allow_oversized', $event.target.checked)" />
           <span class="text-xs">Allow oversized</span>
@@ -191,14 +205,10 @@
             <option value="2">2×</option>
           </select>
         </label>
-        <label class="block">
-          <span class="text-xs text-slate-500">Workflow</span>
-          <select :value="modelValue.workflow" @change="upd('workflow', $event.target.value)"
-            class="mt-1 w-full border rounded p-1.5 text-xs">
-            <option value="auto">авто</option>
-            <option value="reference">reference</option>
-          </select>
-        </label>
+        <div class="block">
+          <span class="text-xs text-slate-500">Workflow (см. блок «Точность линий»)</span>
+          <div class="mt-1 w-full border rounded p-1.5 text-xs bg-slate-50 text-slate-600">{{ modelValue.workflow || 'edit' }}</div>
+        </div>
       </div>
       <div class="flex gap-2">
         <button class="flex-1 px-3 py-2 rounded bg-slate-900 text-white text-xs hover:bg-slate-700" @click="$emit('save')">Сохранить</button>

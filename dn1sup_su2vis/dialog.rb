@@ -35,6 +35,7 @@ module Dn1sup
             @dialog.set_html(fallback_html)
           end
           @dialog.show
+          kick_autostart
           @dialog
         rescue StandardError => e
           warn "[Su2vis] Не удалось открыть панель: #{e.message}"
@@ -91,6 +92,19 @@ module Dn1sup
 
         private
 
+        # Тихий автозапуск студии при открытии панели (если включён
+        # в настройках). Не блокирует показ: подъём — в Thread.
+        def kick_autostart
+          s = Settings.all
+          return unless s['unsloth_autostart'] == true
+
+          Studio.ensure_async(s['unsloth_url'].to_s, s['unsloth_key'].to_s,
+                              s['unsloth_cmd'].to_s)
+        rescue StandardError => e
+          warn "[Su2vis] autostart: #{e.message}"
+          nil
+        end
+
         def bring_to_front
           @dialog.bring_to_front
           @dialog
@@ -138,22 +152,25 @@ module Dn1sup
           end
           dlg.add_action_callback('scenes_thumb') do |_ctx, req_id, params|
             data = parse_payload(params)
+            white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
             push_event('result', id: req_id,
-                       payload: { index: data['index'].to_i, thumb: Scenes.thumbnail(data['index'].to_i) })
+                       payload: { index: data['index'].to_i, thumb: Scenes.thumbnail(data['index'].to_i, white_bg: white) })
           end
           dlg.add_action_callback('scenes_sync_view') do |_ctx, req_id, params|
             data = parse_payload(params)
             idx = data['index'].to_i
             ok = Scenes.update_camera(idx)
+            white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
             push_event('result', id: req_id,
-                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx) })
+                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx, white_bg: white) })
           end
           dlg.add_action_callback('scenes_capture') do |_ctx, req_id, params|
             data = parse_payload(params)
             begin
               list = Array(data['scenes']).map(&:to_i)
-              shots = Scenes.capture_all(list, hd: data['hd'] == true)
-              Log.append('shots_captured', 'scenes' => list, 'hd' => data['hd'] == true)
+              sk = data['sketch'].is_a?(Hash) ? data['sketch'] : {}
+              shots = Scenes.capture_all(list, hd: data['hd'] == true, sketch: sk)
+              Log.append('shots_captured', 'scenes' => list, 'hd' => data['hd'] == true, 'sketch' => sk)
               push_event('result', id: req_id, payload: { ok: true, sketches: shots })
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
@@ -290,16 +307,30 @@ module Dn1sup
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end
           end
+          # Апсемплер — только в фоне (см. Enhance): колбэк отдаёт задачу
+          # сразу, панель опрашивает enhance_poll. Сеть на главном потоке
+          # вешает UI на секунды инференса. rescue Exception — наружу
+          # из колбэка мосту ничего не должно вылетать.
           dlg.add_action_callback('enhance_preview') do |_ctx, req_id, params|
             data = parse_payload(params)
             begin
               s = Settings.all
-              raise 'нет ключа Unsloth Studio (окно Подключение в шапке)' if s['unsloth_key'].to_s.empty?
-              ep = Client.enhance_preview(s['unsloth_url'], s['unsloth_key'],
-                                          data['prompt'] || s['prompt'], data['reference'])
-              push_event('result', id: req_id, payload: { ok: true, enhanced_prompt: ep })
-            rescue StandardError => e
-              push_event('result', id: req_id, payload: { ok: false, error: e.message })
+              key = s['unsloth_key'].to_s
+              raise 'нет ключа Unsloth Studio (окно Подключение в шапке)' if key.empty?
+              task = Enhance.start(s['unsloth_url'].to_s, key,
+                                   (data['prompt'] || s['prompt']).to_s,
+                                   data['reference'].to_s)
+              push_event('result', id: req_id, payload: { ok: true, task: task })
+            rescue Exception => e # rubocop:disable Lint/RescueException
+              push_event('result', id: req_id, payload: { ok: false, error: e.message.to_s })
+            end
+          end
+          dlg.add_action_callback('enhance_poll') do |_ctx, req_id, params|
+            data = parse_payload(params)
+            begin
+              push_event('result', id: req_id, payload: { ok: true, task: Enhance.poll(data['id'].to_s) })
+            rescue Exception => e # rubocop:disable Lint/RescueException
+              push_event('result', id: req_id, payload: { ok: false, error: e.message.to_s })
             end
           end
           # Байты превью из панели — во временный файл для финала:
@@ -335,10 +366,26 @@ module Dn1sup
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end
           end
-          # Модели студии для окна «Подключение»: текущий статус image-пайплайна
-          # (там же возможности: family, workflows, supports_*, conditioning)
-          # + только модели генерации картинок из GET /v1/models (task ~ image).
-          # LLM, аудио и pup-апсемплер в список не попадают.
+          # Автозапуск headless-студии (без GUI): мгновенный ответ,
+          # тяжёлый подъём — в Thread (см. Studio.ensure_async).
+          # Дубль при живом потоке не стартует.
+          dlg.add_action_callback('studio_ensure') do |_ctx, req_id, params|
+            data = parse_payload(params)
+            s = data['settings'] || Settings.all
+            begin
+              cmd = s['unsloth_cmd'].to_s
+              cmd = Settings.all['unsloth_cmd'].to_s if cmd.strip.empty?
+              res = Studio.ensure_async(s['unsloth_url'].to_s, s['unsloth_key'].to_s, cmd)
+              push_event('result', id: req_id, payload: res.merge(ok: true))
+            rescue StandardError => e
+              push_event('result', id: req_id, payload: { ok: false, error: e.message })
+            end
+          end
+          dlg.add_action_callback('studio_state') do |_ctx, req_id|
+            push_event('result', id: req_id, payload: { ok: true, state: Studio.state })
+          end
+          # Только klein: одна запись модели + варианты квантования
+          # (gguf-variants) для выбора в окне «Подключение» + статус пайплайна.
           dlg.add_action_callback('studio_models') do |_ctx, req_id, params|
             data = parse_payload(params)
             s = data['settings'] || Settings.all
@@ -346,30 +393,33 @@ module Dn1sup
               url = s['unsloth_url'].to_s
               key = s['unsloth_key'].to_s
               raise 'нет ключа Unsloth Studio (окно Подключение в шапке)' if key.empty?
-              models = Client.image_models(url, key)
               begin
                 st = Client.status(url, key)
               rescue StandardError
                 st = nil
               end
+              variants = []
+              default_variant = nil
               begin
-                studio_defaults = Client.generation_preset(url, key)
+                j = Client.gguf_variants(url, key, Client::KLEIN_REPO)
+                variants = j.is_a?(Hash) ? (j['variants'] || j['data'] || []) : []
+                default_variant = j.is_a?(Hash) ? (j['default_variant'] || j['default']) : nil
               rescue StandardError
-                studio_defaults = nil
+                variants = []
               end
-              models = models.map do |m|
-                file = ''
-                begin
-                  file = Client.resolve_gguf_filename(url, key, m['id'], m['quant'])
-                rescue StandardError
-                  file = ''
-                end
-                m.merge('gguf_file' => file,
-                        'preset' => Client.preset_for(m['id'], studio_defaults))
-              end
+              current = st ? st['gguf_filename'].to_s : s['unsloth_gguf'].to_s
+              current = Client::KLEIN_GGUF if current.empty?
+              preset = Client.preset_for(Client::KLEIN_REPO)
+              models = [{ 'id' => Client::KLEIN_REPO, 'loaded' => st ? !!st['loaded'] : false,
+                          'task' => 'text-to-image',
+                          'quant' => current.sub(/^flux-3-image-klein-(UD-)?/i, '').sub(/\.gguf$/i, ''),
+                          'display_name' => Client::KLEIN_REPO,
+                          'gguf_file' => current, 'preset' => preset,
+                          'variants' => variants, 'default_variant' => default_variant,
+                          'current_gguf' => current }]
               push_event('result', id: req_id,
                          payload: { ok: true, models: models, status: st,
-                                    studio_defaults: studio_defaults })
+                                    studio_defaults: { 'steps' => 4, 'guidance' => 1.0 } })
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end

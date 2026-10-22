@@ -27,8 +27,8 @@
       <button class="shrink-0 px-2 py-1 text-slate-500 hover:text-slate-800" @click="projectDismissed = true">Позже</button>
     </div>
     <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[200px_240px_auto_1fr_340px]">
-      <ScenesCol :scenes="scenes" :selected="selected" :thumbs="thumbs" :enabled="useScenes"
-        @toggle="toggle" @toggle-enabled="setUseScenes"
+      <ScenesCol :scenes="scenes" :selected="selected" :thumbs="thumbs" :enabled="useScenes" :sketch="sketchOpts"
+        @toggle="toggle" @toggle-enabled="setUseScenes" @update-sketch="setSketch"
         @refresh="loadScenes" @sync-view="syncView" />
       <MixinsCol :items="mixins" :enabled="useMixins"
         @add-data="addMixinData" @add-path="addMixinPath" @toggle="toggleMixin"
@@ -48,7 +48,7 @@
     <StatusBar :text="statusText" :tone="statusTone" />
     <ConnectionModal v-if="showConnection" v-model="settings" :status="studioStatus" :caps="studioCaps"
       :models="studioModels" :models-loading="modelsLoading" :models-error="modelsError"
-      @save="saveSettings" @check="checkStudio" @refresh-models="loadModels" @close="showConnection = false" />
+      @save="saveSettings" @check="checkStudio" @ensure="ensureStudio" @refresh-models="loadModels" @close="showConnection = false" />
     <div v-if="viewer" class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" @click.self="viewer = null">
       <div class="max-w-full max-h-full overflow-auto scroll-slim bg-white rounded p-2">
         <div class="flex items-center justify-between gap-4 px-1 pb-1">
@@ -89,6 +89,8 @@ const busyKind = ref(null)
 const capturing = ref(false)
 const studioStatus = ref(null)
 const checkingStudio = ref(false)
+// true пока фоновый автозапуск студии не дал связи (шапка показывает «запуск…»).
+const studioStarting = ref(false)
 // Модель, загруженная в студии сейчас (repo/gguf из images/status).
 // В шапке показываем её; пока студия не опрошена — выбранную в настройках.
 const studioModel = ref({ repo: '', gguf: '' })
@@ -107,15 +109,17 @@ const modelTitle = computed(() => {
 })
 
 const connLabel = computed(() => {
+  if (studioStarting.value) return 'Unsloth: запуск…'
   if (checkingStudio.value || studioStatus.value === null) return 'Unsloth: проверка…'
   return studioStatus.value.ok ? 'Unsloth: подключено' : 'Unsloth: нет связи'
 })
 const connDot = computed(() => {
-  if (checkingStudio.value || studioStatus.value === null) return 'bg-slate-400 animate-pulse'
+  if (studioStarting.value || checkingStudio.value || studioStatus.value === null) return 'bg-slate-400 animate-pulse'
   return studioStatus.value.ok ? 'bg-green-400' : 'bg-red-500'
 })
 const connTitle = computed(() => {
   const url = settings.value.unsloth_url || ''
+  if (studioStarting.value) return `Запускаю студию на ${url}…`
   if (checkingStudio.value) return 'Проверяю студию…'
   if (studioStatus.value?.ok) return `Подключено к ${url} — нажмите чтобы перепроверить`
   return `${studioStatus.value?.text || 'нет связи'} (${url}) — нажмите чтобы перепроверить`
@@ -250,8 +254,9 @@ async function loadScenes() {
   scenes.value = Array.isArray(list) ? list : []
   if (!selected.value.length && scenes.value.length) selected.value = [scenes.value[0].index]
   const next = {}
+  const white = settings.value.sketch_white_bg === true
   for (const s of scenes.value) {
-    const t = await callRuby('scenes_thumb', { index: s.index })
+    const t = await callRuby('scenes_thumb', { index: s.index, white_bg: white })
     if (t && t.thumb) next[t.index] = t.thumb
   }
   thumbs.value = next
@@ -263,7 +268,7 @@ async function loadAll() {
 }
 
 async function syncView(index) {
-  const r = await callRuby('scenes_sync_view', { index })
+  const r = await callRuby('scenes_sync_view', { index, white_bg: settings.value.sketch_white_bg === true })
   if (r && r.thumb) thumbs.value = { ...thumbs.value, [r.index]: r.thumb }
 }
 
@@ -278,6 +283,42 @@ async function setUseScenes(v) {
 
 async function setUseMixins(v) {
   settings.value.use_mixins = !!v
+  await saveSettings()
+}
+
+// Параметры съёма эскиза-референса (блок в 1-й колонке → settings → scenes_capture).
+const sketchOpts = computed(() => ({
+  source: settings.value.sketch_source || 'hd',
+  preset: settings.value.sketch_preset || '1024x768',
+  thin_lines: settings.value.sketch_thin_lines !== false,
+  hide_dims: settings.value.sketch_hide_dims !== false,
+  autocrop: settings.value.sketch_autocrop === true,
+  white_bg: settings.value.sketch_white_bg === true
+}))
+
+function sketchPayload() {
+  const o = sketchOpts.value
+  const m = String(o.preset || '').match(/(\d+)\s*x\s*(\d+)/i)
+  return {
+    source: o.source, thin_lines: !!o.thin_lines, hide_dims: !!o.hide_dims,
+    autocrop: !!o.autocrop, white_bg: !!o.white_bg,
+    preset_w: m ? +m[1] : 0, preset_h: m ? +m[2] : 0
+  }
+}
+
+async function setSketch(patch) {
+  const p = patch || {}
+  if (p.source !== undefined) settings.value.sketch_source = p.source
+  if (p.preset !== undefined) settings.value.sketch_preset = p.preset
+  if (p.thin_lines !== undefined) settings.value.sketch_thin_lines = !!p.thin_lines
+  if (p.hide_dims !== undefined) settings.value.sketch_hide_dims = !!p.hide_dims
+  if (p.autocrop !== undefined) settings.value.sketch_autocrop = !!p.autocrop
+  if (p.white_bg !== undefined) {
+    settings.value.sketch_white_bg = !!p.white_bg
+    await saveSettings()
+    await loadScenes()
+    return
+  }
   await saveSettings()
 }
 
@@ -298,6 +339,14 @@ async function saveSettings() {
   if (s) settings.value = s
 }
 
+async function ensureStudio() {
+  try {
+    const r = await callRuby('studio_ensure', { settings: settings.value })
+    if (r && r.state && r.state.status === 'starting') studioStarting.value = true
+    return r
+  } catch { return null }
+}
+
 async function checkStudio() {
   if (checkingStudio.value) return
   checkingStudio.value = true
@@ -307,6 +356,7 @@ async function checkStudio() {
     studioStatus.value = r && r.ok
       ? { ok: true, text: `Студия OK: ${r.status.repo_id || 'модель'} (${(r.status.workflows || []).join(',')})` }
       : { ok: false, text: `Ошибка: ${r?.error || 'нет ответа'}` }
+    if (r && r.ok) studioStarting.value = false
     if (r && r.ok && r.status) {
       studioModel.value = { repo: r.status.repo_id || '', gguf: r.status.gguf_filename || '' }
     }
@@ -336,7 +386,8 @@ async function loadModels() {
         const txt = `Студия OK: ${st.repo_id || 'модель'}${st.gguf_filename ? '/' + st.gguf_filename : ''} (${(st.workflows || []).join(',')})`
         if (!cur || !cur.ok || cur.text !== txt) studioStatus.value = { ok: true, text: txt }
       }
-      if (!studioModels.value.length) modelsError.value = 'Студия не отдала image-моделей (в /v1/models нет task с image).'
+      if (!studioModels.value.length) modelsError.value = 'Студия не подтвердила klein (проверь URL и ключ).'
+      else if (!((studioModels.value[0] || {}).variants || []).length) modelsError.value = 'Студия не отдала варианты квантования (проверь связь и повтори).'
     } else {
       modelsError.value = r?.error || 'не удалось опросить студию'
       studioModels.value = []
@@ -353,11 +404,11 @@ async function loadModels() {
 
 // Эскизы снимаем на главном потоке ДО старта фоновой задачи:
 // write_image из рабочего Thread отдаёт устаревший кадр.
-// hd: референс для превью — сцена 1600 с тонкими линиями.
+// Параметры съёма — из блока «Эскиз-референс» 1-й колонки.
 async function captureSketches(list, hd = false) {
   capturing.value = true
   try {
-    const r = await callRuby('scenes_capture', { scenes: list, hd })
+    const r = await callRuby('scenes_capture', { scenes: list, hd, sketch: sketchPayload() })
     if (!r || !r.ok) throw new Error(r?.error || 'снимок не удался')
     return r.sketches || {}
   } finally {
@@ -477,9 +528,27 @@ async function retryFinal(r) {
 async function previewEnhance() {
   enhancePreview.value = { loading: true }
   const ref = selected.value.length ? (thumbs.value[selected.value[0]] || null) : null
-  const res = await callRuby('enhance_preview', { prompt: settings.value.prompt, reference: ref })
-  if (res && res.ok) enhancePreview.value = { text: res.enhanced_prompt }
-  else enhancePreview.value = { error: (res && res.error) || 'не удалось получить капшн' }
+  // Апсемплер считается в фоне (Ruby Enhance): стартуем и опрашиваем,
+  // каждый опрос быстрый — главный поток SketchUp не висит.
+  const started = await callRuby('enhance_preview', { prompt: settings.value.prompt, reference: ref })
+  const task = started && started.ok && started.task ? started.task : null
+  if (!task || !task.id) {
+    enhancePreview.value = { error: (started && started.error) || 'не удалось запустить апсемплер' }
+    return
+  }
+  for (let i = 0; i < 300; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    const p = await callRuby('enhance_poll', { id: task.id })
+    const t = p && p.ok && p.task ? p.task : null
+    if (!t) { enhancePreview.value = { error: 'потеряна задача апсемплера' }; return }
+    if (t.status === 'done') {
+      if (t.text) enhancePreview.value = { text: t.text }
+      else enhancePreview.value = { error: 'студия вернула пустой enhanced_prompt' }
+      return
+    }
+    if (t.status === 'error') { enhancePreview.value = { error: t.error || 'не удалось получить капшн' }; return }
+  }
+  enhancePreview.value = { error: 'апсемплер не ответил за 10 минут' }
 }
 
 async function selectOutDir() {
@@ -727,6 +796,13 @@ onMounted(async () => {
   await loadLog()
   await loadGallery()
   await loadMixins()
-  checkStudio()
+  await ensureStudio()
+  await checkStudio()
+  // Студия стартует десятки секунд: допроверяем в фоне до связи.
+  for (let i = 0; i < 30 && (!studioStatus.value || !studioStatus.value.ok); i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    await checkStudio()
+  }
+  if (!studioStatus.value || !studioStatus.value.ok) studioStarting.value = false
 })
 </script>

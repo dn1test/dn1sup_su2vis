@@ -17,6 +17,63 @@ module Dn1sup
       Job = Struct.new(:id, :kind, :status, :progress, :results, :error, :params, :cancel_requested, keyword_init: true)
       Cancelled = Class.new(StandardError)
 
+      # GVL-памп: рабочие потоки задач в живом SketchUp голодают, пока
+      # главный поток висит в цикле сообщений (наблюдалось: задача висит
+      # в blocking-IO минутами, а 30-секундный sleep на главном потоке
+      # доводит её до done). Повторяющийся таймер дёргает Thread.pass —
+      # потоки получают кванты, UI остаётся отзывчивым (пассы — микросекунды,
+      # пока рабочим нечего делать). Только пока есть активные задачи;
+      # блок сам гасит таймер, когда задач не осталось (переживает reload).
+      @pump_timer = nil
+
+      def any_running?
+        @jobs.values.any? { |j| !%w[done error cancelled].include?(j.status) }
+      end
+
+      def pump_active?
+        !@pump_timer.nil?
+      end
+
+      def pump_start
+        return @pump_timer unless @pump_timer.nil?
+        return nil unless defined?(UI) && UI.respond_to?(:start_timer)
+
+        id = UI.start_timer(0.2, true) do
+          20.times { Thread.pass }
+          begin
+            unless any_running?
+              UI.stop_timer(id)
+              # Флаг тоже чистим здесь (а не только в maybe_pump_stop):
+              # рабочий поток под голоданием доходит до ветки завершения
+              # с запозданием, а висящий true + мёртвый таймер заставил бы
+              # следующий enqueue переиспользовать мёртвый id без пампа.
+              # Охрана == id: чужой (новый) таймер не трогаем.
+              @pump_timer = nil if @pump_timer == id
+            end
+          rescue StandardError
+            nil
+          end
+        end
+        @pump_timer = id
+      rescue StandardError
+        nil
+      end
+
+      def pump_stop
+        id = @pump_timer
+        @pump_timer = nil
+        begin
+          UI.stop_timer(id) if id && defined?(UI) && UI.respond_to?(:stop_timer)
+        rescue StandardError
+          nil
+        end
+        nil
+      end
+
+      def maybe_pump_stop
+        pump_stop unless any_running?
+      end
+
       def all
         @jobs.values.map { |j| public_view(j) }
       end
@@ -42,6 +99,7 @@ module Dn1sup
                       results: [], error: nil, params: { 'scenes' => scenes, 'settings' => settings },
                       cancel_requested: false)
         @jobs[id] = job
+        pump_start
         Thread.new { run(job) }
         public_view(job)
       end
@@ -49,6 +107,9 @@ module Dn1sup
       # Кооперативная остановка: поток проверит флаг перед следующим кадром.
       # Текущий кадр (блокирующий HTTP) дойдёт до конца. Параллельно просим
       # студию остановить генерацию — тогда текущий кадр тоже прервётся.
+      # Плюс закрываем висящее HTTP-соединение задачи (см. Client.abort):
+      # иначе поток торчит в http.request до read_timeout (30 мин),
+      # а зависший на стороне студии запрос — вечно.
       def cancel(id)
         job = @jobs[id.to_s]
         return { ok: false, error: 'job not found' } unless job
@@ -57,6 +118,7 @@ module Dn1sup
         job.cancel_requested = true
         s = job.params['settings'] || {}
         Client.gen_cancel(s['unsloth_url'].to_s, s['unsloth_key'].to_s)
+        Client.abort(job.id)
         { ok: true, id: job.id }
       end
 
@@ -120,7 +182,16 @@ module Dn1sup
               (cand && File.file?(cand.to_s)) ? cand.to_s : nil
             else
               cap = (job.params['sketches'] || {})[idx.to_s] || (job.params['sketches'] || {})[idx]
-              cap = Scenes.capture(idx) if cap.to_s.empty? || !File.file?(cap.to_s)
+              # Фолбэк (эскиз не снят на главном потоке): те же параметры
+              # съёма, что в колонке «Сцены» — тонкие линии, скрытие размеров,
+              # автокроп полей.
+              if cap.to_s.empty? || !File.file?(cap.to_s)
+                cap = Scenes.capture(idx, nil, nil,
+                                     thin_lines: s['sketch_thin_lines'] != false,
+                                     hide_dims: s['sketch_hide_dims'] != false)
+                cap = Scenes.maybe_autocrop(cap, s['sketch_autocrop'] == true ||
+                                                 s['sketch_autocrop'].to_s == 'true')
+              end
               cap.to_s
             end
           # Финал идёт из байтов превью (from_preview): тот же сюжет seed'ом
@@ -168,7 +239,8 @@ module Dn1sup
             batch_size: batch, seeds: batch_seeds,
             enhance_prompt: enhance,
             upscale: up > 0 ? up : nil, workflow: wf,
-            extra_references: mix_paths, mixins_prompt: mp
+            extra_references: mix_paths, mixins_prompt: mp,
+            http_id: job.id, geometry_lock: s.fetch('geometry_lock', true)
           )
           gen_s = (Time.now - t_gen).round(1)
           items.each_with_index do |(bytes, meta), i|
@@ -199,16 +271,30 @@ module Dn1sup
         job.progress = { done: scenes.size, total: scenes.size }
         job.status = 'done'
         Log.append('job_done', 'id' => job.id, 'status' => 'done', 'total_s' => (Time.now - t_job).round(1))
+        maybe_pump_stop
       rescue Cancelled => e
         job.status = 'cancelled'
         job.error = e.message
         Log.append('job_done', 'id' => job.id, 'status' => 'cancelled',
                    'done' => job.results.size, 'total_s' => (Time.now - t_job).round(1))
+        maybe_pump_stop
       rescue StandardError => e
-        job.status = 'error'
-        job.error = e.message
-        Log.append('job_done', 'id' => job.id, 'status' => 'error', 'error' => e.message[0, 300],
-                   'done' => job.results.size, 'total_s' => (Time.now - t_job).round(1))
+        # Соединение закрыто по cancel (Client.abort) — это остановка,
+        # а не ошибка: флаг проверяется здесь, т.к. обрыв прилетает
+        # из заблокированного http.request, а не из check_cancel!.
+        if job.cancel_requested
+          job.status = 'cancelled'
+          job.error = 'остановлено пользователем'
+          Log.append('job_done', 'id' => job.id, 'status' => 'cancelled',
+                     'done' => job.results.size, 'total_s' => (Time.now - t_job).round(1))
+          maybe_pump_stop
+        else
+          job.status = 'error'
+          job.error = e.message
+          Log.append('job_done', 'id' => job.id, 'status' => 'error', 'error' => e.message[0, 300],
+                     'done' => job.results.size, 'total_s' => (Time.now - t_job).round(1))
+          maybe_pump_stop
+        end
       end
 
       # Мета картинки для сайдкара галереи (описание параметров рядом с файлом).
@@ -217,6 +303,7 @@ module Dn1sup
           'width' => w, 'height' => h, 'prompt' => s['prompt'],
           'strength' => s['strength'], 'steps' => s['steps'],
           'guidance' => s['guidance'], 'workflow' => s['workflow'],
+          'geometry_lock' => s.fetch('geometry_lock', true),
           'enhance_prompt' => s['enhance_prompt'], 'upscale' => s['final_upscale'],
           'final_strength' => s['final_strength'], 'from_preview' => from_prev,
           'mixins' => Array(s['mixins']).map { |m| m.is_a?(Hash) ? { 'file' => File.basename((m['path'] || m['file'] || '').to_s), 'caption' => (m['caption'] || '').to_s, 'caption_neg' => (m['caption_neg'] || '').to_s, 'role' => (m['role'] || 'auto').to_s, 'weight' => (m['weight'] || 1.0).to_f, 'apply_to' => (m['apply_to'] || 'both').to_s, 'crop' => Mixins.norm_crop(m['crop'] || m[:crop]), 'rotation' => Mixins.norm_rotation(m['rotation'] || m[:rotation]) } : nil }.compact,

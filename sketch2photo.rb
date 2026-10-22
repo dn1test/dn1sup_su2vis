@@ -200,10 +200,15 @@ def unsloth_load_progress(url, key)
 end
 
 def unsloth_ensure_loaded!(url, key, model_path, gguf_filename, memory_mode = nil)
+  model_path = 'unsloth/flux-3-image-klein-GGUF'
   st = unsloth_status(url, key)
-  mem_ok = memory_mode.nil? || memory_mode.to_s.empty? || st['memory_mode'] == memory_mode
-  return st if st['loaded'] && st['repo_id'] == model_path &&
-               (gguf_filename.nil? || st['gguf_filename'] == gguf_filename) && mem_ok
+  # Только klein: тот же repo уже загружен — квант не важен (Q8_0/Q4 — та же модель).
+  if st['loaded'] && st['repo_id'] == model_path
+    return st if gguf_filename.to_s.empty? || st['gguf_filename'].to_s.empty? ||
+                 st['gguf_filename'] == gguf_filename
+    gguf_filename = st['gguf_filename']
+    return st
+  end
 
   puts "  - загружаю модель в студию (#{model_path}#{", memory_mode=#{memory_mode}" if memory_mode})..."
   body = { model_path: model_path }

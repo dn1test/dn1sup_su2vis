@@ -10,7 +10,7 @@ end
 
 module Dn1sup
   module Su2vis
-    VERSION = '0.7.0'.freeze
+    VERSION = '0.13.0'.freeze
 
     ID       = 'dn1sup_su2vis'.freeze
     REPO     = 'dn1test/dn1sup_su2vis'.freeze
@@ -21,7 +21,9 @@ module Dn1sup
     require_relative 'settings'
     require_relative 'log'
     require_relative 'client'
+    require_relative 'studio'
     require_relative 'scenes'
+    require_relative 'enhance'
     require_relative 'jobs'
     require_relative 'gallery'
     require_relative 'mixins'
@@ -29,6 +31,7 @@ module Dn1sup
 
     def self.unload!
       Panel.close_all if defined?(Panel) && Panel.respond_to?(:close_all)
+      Jobs.pump_stop if defined?(Jobs) && Jobs.respond_to?(:pump_stop)
       true
     rescue StandardError => e
       warn "[Su2vis] unload!: #{e.message}"

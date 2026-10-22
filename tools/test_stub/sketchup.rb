@@ -76,6 +76,14 @@ module UI
     @menu ||= Menu.new
   end
 
+  @timer_seq = 0
+
+  def self.start_timer(_interval, _repeat, &_block)
+    @timer_seq = (@timer_seq || 0) + 1
+  end
+
+  def self.stop_timer(_id); end
+
   def self.openURL(_url); end
 end
 

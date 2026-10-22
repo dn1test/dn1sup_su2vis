@@ -63,9 +63,11 @@ const mockSettings = {
   strength: 1.0, steps: 4, guidance: 1.0, memory_mode: 'balanced',
   allow_oversized: true, suffix: '_photorealistic', ext: 'jpg',
   unsloth_url: 'http://127.0.0.1:8888', unsloth_key: '',
+  unsloth_autostart: true, unsloth_cmd: 'unsloth',
   unsloth_model: 'unsloth/flux-3-image-klein-GGUF',
   unsloth_gguf: 'flux-3-image-klein-UD-Q4_K_XL.gguf',
-  sketch_preset: '1024x768', preview_preset: '256', preview_variants: 1,
+  sketch_preset: '1024x768', sketch_source: 'hd', sketch_thin_lines: true, sketch_hide_dims: true, sketch_autocrop: false,
+  preview_preset: '256', preview_variants: 1,
   final_strength: 0.4, out_dir: '',
   project_state: 'global', project_dir: '', model_name: '',
   final_mode: 'sketch', final_w: 2048, final_h: 1536,
@@ -98,12 +100,15 @@ function mockCall(action, payload) {
     case 'mixins_reorder': return { ok: true }
     case 'mixins_delete': return { ok: true }
     case 'mixins_view': return { ok: true, data_url: null }
-    case 'enhance_preview': return { ok: true, enhanced_prompt: 'mock: вне SketchUp — здесь будет текст апсемплера' }
+    case 'enhance_preview': return { ok: true, task: { id: 'mock-enh', status: 'done', text: 'mock: вне SketchUp — здесь будет текст апсемплера', error: null } }
+    case 'enhance_poll': return { ok: true, task: { id: payload?.id || 'mock-enh', status: 'done', text: 'mock: вне SketchUp — здесь будет текст апсемплера', error: null } }
     case 'select_out_dir': return { ok: true, settings: { ...mockSettings, out_dir: 'mock-out' } }
     case 'preview_save': return { ok: true, path: 'mock-prev.png' }
     case 'gen_progress': return { active: false }
     case 'jobs_list': return []
     case 'studio_status': return { ok: false, error: 'mock: вне SketchUp' }
+    case 'studio_ensure': return { ok: true, started: true, state: { status: 'starting' } }
+    case 'studio_state': return { ok: true, state: { status: 'running', already: true } }
     case 'studio_models': return {
       ok: true,
       models: [

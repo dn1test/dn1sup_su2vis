@@ -4,6 +4,7 @@ require 'net/http'
 require 'uri'
 require 'json'
 require 'base64'
+require 'thread'
 
 module Dn1sup
   module Su2vis
@@ -11,6 +12,40 @@ module Dn1sup
     # плюс seed + strength (нужны для связки превью -> финал).
     module Client
       module_function
+
+      # Реестр живых HTTP-соединений генерации (id задачи -> Net::HTTP).
+      # Нужен для мгновенной остановки: Jobs.cancel закрывает сокет,
+      # висящий http.request падает с IOError — поток разблокируется сразу,
+      # а не через read_timeout (30 мин). Мьютекс — потоки Jobs.
+      HTTP_REGISTRY = {}
+      HTTP_REGISTRY_MUTEX = Mutex.new
+
+      def register_http(id, http)
+        return if id.to_s.empty? || http.nil?
+
+        HTTP_REGISTRY_MUTEX.synchronize { HTTP_REGISTRY[id.to_s] = http }
+        nil
+      end
+
+      def unregister_http(id)
+        return if id.to_s.empty?
+
+        HTTP_REGISTRY_MUTEX.synchronize { HTTP_REGISTRY.delete(id.to_s) }
+        nil
+      end
+
+      # Закрыть соединение задачи (best-effort). true — было что закрывать.
+      def abort(id)
+        http = HTTP_REGISTRY_MUTEX.synchronize { HTTP_REGISTRY.delete(id.to_s) }
+        return false if http.nil?
+
+        begin
+          http.finish
+        rescue StandardError
+          nil
+        end
+        true
+      end
 
       def api(url)
         uri = URI(url)
@@ -28,16 +63,44 @@ module Dn1sup
         JSON.parse(res.body)
       end
 
+      # Работаем только с flux-3-image-klein (distilled, строго 4 шага).
+      # Выбор других моделей убран: константы — единый источник истины.
+      KLEIN_REPO = 'unsloth/flux-3-image-klein-GGUF'.freeze
+      KLEIN_GGUF = 'flux-3-image-klein-UD-Q4_K_XL.gguf'.freeze
+      KLEIN_STEPS = 4
+      KLEIN_GUIDANCE = 1.0
+      # Студия больше не принимает workflow='auto' (422: только
+      # 'edit'/'reference'/'outpaint'). Поле вообще не шлём — студия
+      # сама выбирает workflow (как sketch2photo.rb, где поля нет).
+      # Явный workflow из белого списка пропускаем как есть.
+      KLEIN_WORKFLOW = nil
+      ALLOWED_WORKFLOWS = %w[edit reference outpaint].freeze
+      KLEIN_MEMORY_MODE = 'balanced'.freeze
+      KLEIN_MAX_SIDE = 2048
+      KLEIN_LABEL = 'klein (distilled)'.freeze
+
+      # Жёсткая дописка для привязки к линиям эскиза. Действие: запрещает
+      # модели двигать/добавлять/убирать стены, окна, двери и менять камеру —
+      # дорисовывать только материалы, свет и фотореализм поверх линий.
+      GEOMETRY_LOCK_TEXT = 'Strictly follow the input sketch linework: do not move, add or remove walls, windows, doors or openings, keep the exact camera and proportions. Photorealistic materials and lighting only, no geometry changes.'.freeze
+
+      # Промпт + опциональный замок геометрии. Действие: при lock=true дописывает
+      # GEOMETRY_LOCK_TEXT (если его там ещё нет) — модель держится линий.
+      def apply_geometry_lock(prompt, lock_enabled)
+        base = prompt.to_s
+        return base unless lock_enabled == true || lock_enabled.to_s == 'true'
+        return base if base.include?(GEOMETRY_LOCK_TEXT)
+        return GEOMETRY_LOCK_TEXT if base.strip.empty?
+
+        "#{base}\n#{GEOMETRY_LOCK_TEXT}"
+      end
+
       def status(url, key)
         get_json(url, key, '/api/inference/images/status')
       end
 
-      # Список моделей студии: загруженные + локально доступные.
-      # GET /v1/models -> {"data": [{"id": "...", "loaded": ..., "task": ...}]}.
-      # Формат ключей между версиями гуляет (data/models, loaded/is_loaded/
-      # state), поэтому нормализуем к [{id, loaded, task, quant, ...}].
-      # task различает назначение: "text-to-image" — генерация картинок,
-      # отсутствие task — LLM/аудио/апсемплер (pup) — не для генерации.
+      # Диагностика списка моделей (для статуса); для выбора
+      # больше не используется — генерация только на KLEIN_*.
       def available_models(url, key)
         j = get_json(url, key, '/v1/models')
         arr = j.is_a?(Hash) ? (j['data'] || j['models'] || []) : Array(j)
@@ -102,66 +165,42 @@ module Dn1sup
         pick_variant(vars, quant, dv)
       end
 
-      # Дефолт генерации студии (Default-пресет): fallback для моделей
-      # без своего пресета. -> {'steps'=>16, 'guidance'=>1.0} или nil.
-      def generation_preset(url, key)
-        j = get_json(url, key, '/api/settings/generation-presets/image')
-        cur = j.is_a?(Hash) ? (j['currentParams'] || {}) : {}
-        steps = cur['steps'] || cur['Steps']
-        guidance = cur['guidance'] || cur['Guidance']
-        return nil if steps.nil? && guidance.nil?
-        { 'steps' => steps.to_i, 'guidance' => guidance.to_f }
-      rescue StandardError
-        nil
+      # Дефолт генерации студии больше не используется: параметры
+      # зафиксированы под klein (distilled 4/1.0). Оставлен заглушкой
+      # для совместимости моста.
+      def generation_preset(_url, _key)
+        { 'steps' => KLEIN_STEPS, 'guidance' => KLEIN_GUIDANCE }
       end
 
-      # Пресеты генерации по семействам (при выборе модели применяются
-      # steps/guidance/workflow/память/лимит стороны; остальное не трогаем).
-      # match — токены (нормализованные) все должны войти в id; skip — исключить.
-      # klein distilled: строго 4 шага / guidance 1.0 («пережар» на большем).
+      # Единственный пресет — klein (distilled). Остальные семейства удалены:
+      # расширение работает только с flux-3-image-klein.
       IMAGE_PRESETS = [
         { match: %w[flux klein], skip: %w[], steps: 4, guidance: 1.0,
-          workflow: 'auto', memory_mode: 'balanced', max_side: 2048,
-          label: 'klein (distilled)', vram: '≈13–16 ГБ' },
-        { match: %w[qwenimage], skip: %w[], steps: 50, guidance: 4.0,
-          workflow: 'auto', memory_mode: 'low_vram', max_side: 1536,
-          label: 'qwen-image', vram: '≈40 ГБ' },
-        { match: %w[flux], skip: %w[klein], steps: 28, guidance: 3.5,
-          workflow: 'auto', memory_mode: 'balanced', max_side: 2048,
-          label: 'flux (dev)', vram: '≈24+ ГБ' },
-        { match: %w[sdxl], skip: %w[], steps: 30, guidance: 7.0,
-          workflow: 'auto', memory_mode: 'balanced', max_side: 2048,
-          label: 'sdxl', vram: '' },
-        { match: %w[stablediffusion], skip: %w[], steps: 30, guidance: 7.0,
-          workflow: 'auto', memory_mode: 'balanced', max_side: 2048,
-          label: 'sdxl', vram: '' }
+          workflow: nil, memory_mode: 'balanced', max_side: 2048,
+          label: 'klein (distilled)', vram: '≈13–16 ГБ' }
       ].freeze
+
+      # 'auto'/пусто/мусор — nil (поле не шлём, студия выбирает сама).
+      # Белый список API студии — как есть (в нижнем регистре).
+      def normalize_workflow(v)
+        s = v.to_s.strip.downcase
+        return nil if s.empty? || s == 'auto'
+        return s if ALLOWED_WORKFLOWS.include?(s)
+
+        nil
+      end
 
       def norm_id(s)
         s.to_s.downcase.gsub(/[^a-z0-9]/, '')
       end
 
-      # Пресет для id модели + дефолт студии для неизвестных.
-      # -> {steps, guidance, workflow, memory_mode, max_side, label, source}.
-      def preset_for(model_id, studio_defaults = nil)
-        nid = norm_id(model_id)
-        hit = IMAGE_PRESETS.find do |p|
-          Array(p[:match]).all? { |t| nid.include?(t) } &&
-            Array(p[:skip]).none? { |t| nid.include?(t) }
-        end
-        if hit
-          { 'steps' => hit[:steps], 'guidance' => hit[:guidance],
-            'workflow' => hit[:workflow], 'memory_mode' => hit[:memory_mode],
-            'max_side' => hit[:max_side], 'label' => hit[:label],
-            'vram' => hit[:vram], 'source' => "пресет #{hit[:label]}" }
-        else
-          sd = studio_defaults.is_a?(Hash) ? studio_defaults : {}
-          { 'steps' => (sd['steps'] || 16).to_i,
-            'guidance' => sd.key?('guidance') ? sd['guidance'].to_f : 1.0,
-            'workflow' => 'auto', 'memory_mode' => nil, 'max_side' => nil,
-            'label' => 'дефолт студии', 'vram' => '',
-            'source' => 'дефолт студии' }
-        end
+      # Всегда klein-пресет независимо от входного id: другие модели
+      # не поддерживаются. -> {steps, guidance, workflow, memory_mode, ...}.
+      def preset_for(_model_id = nil, _studio_defaults = nil)
+        { 'steps' => KLEIN_STEPS, 'guidance' => KLEIN_GUIDANCE,
+          'workflow' => KLEIN_WORKFLOW, 'memory_mode' => KLEIN_MEMORY_MODE,
+          'max_side' => KLEIN_MAX_SIDE, 'label' => KLEIN_LABEL,
+          'vram' => '≈13–16 ГБ', 'source' => "пресет #{KLEIN_LABEL}" }
       end
 
       # id вида "repo:variant" (unsloth run) или "repo/file.gguf" ->
@@ -207,18 +246,21 @@ module Dn1sup
 
       # Загрузка модели в студию (первый раз тянет веса). Блокирующий вызов —
       # запускать только из рабочего Thread (см. jobs.rb).
-      def ensure_loaded!(url, key, model_path, gguf_filename, memory_mode = nil)
+      # Только klein: repo фиксировано. Квант — запрошенный gguf
+      # (выбор в окне «Подключение»); пусто — уже загруженный или дефолт.
+      def ensure_loaded!(url, key, _model_path = nil, gguf_filename = nil, _memory_mode = nil)
+        model_path = KLEIN_REPO
+        memory_mode = KLEIN_MEMORY_MODE
         st = status(url, key)
-        mem_ok = memory_mode.nil? || memory_mode.to_s.empty? || st['memory_mode'] == memory_mode
-        return st if st['loaded'] && st['repo_id'] == model_path &&
-          (gguf_filename.nil? || gguf_filename.to_s.empty? || st['gguf_filename'] == gguf_filename) && mem_ok
-
-        body = { model_path: model_path }
-        body[:memory_mode] = memory_mode if memory_mode && !memory_mode.to_s.empty?
-        unless gguf_filename.nil? || gguf_filename.to_s.empty?
-          body[:gguf_filename] = gguf_filename
-          body[:model_kind] = 'gguf'
+        want = gguf_filename.to_s
+        if st['loaded'] && st['repo_id'] == model_path &&
+           (want.empty? || st['gguf_filename'].to_s.empty? || st['gguf_filename'] == want)
+          return st
         end
+        gguf_filename = want.empty? ? KLEIN_GGUF : want
+
+        body = { model_path: model_path, memory_mode: memory_mode,
+                 gguf_filename: gguf_filename, model_kind: 'gguf' }
         http = api(url)
         req = Net::HTTP::Post.new('/api/inference/images/load')
         req['Content-Type'] = 'application/json'
@@ -367,20 +409,21 @@ module Dn1sup
         ep
       end
 
-      # Генерация. Возвращает [items, w, h], где items — массив [bytes, meta]
-      # (batch_size > 1 даёт несколько вариантов за один проход).
-      # seed: nil/-1 = случайный; strength 0..1; enhance_prompt nil = default
-      # семьи (для Klein включён); upscale — hires-fix множитель (только с
-      # init_image); workflow nil = автовыбор студии.
-      # extra_references: пути картинок-примесей (добавляются к reference_images);
-      # mixins_prompt: строка дописки к промпту («что взять» из подписей).
-      # sketch_path = nil (колонка «Сцены» выключена): чистый text-to-image
-      # или только примеси — без init_image и strength (силе нечего
-      # дорабатывать), reference_images — только примеси (могут быть пустыми).
+      # Генерация только на klein (distilled: строго 4 шага / 1.0).
+      # steps/guidance игнорируются из настроек (фиксированы).
+      # geometry_lock: true — дописать замок линий к промпту (точнее держит эскиз).
+      # workflow: 'edit' — точнее держит геометрию, 'reference' — свободнее,
+      # 'auto'/nil — решает студия. strength: ниже = точнее линии (0.3-0.5),
+      # выше = свободнее (0.8-1.0).
+      # Возвращает [items, w, h], где items — массив [bytes, meta].
       def generate(url, key, sketch_path, prompt:, width:, height:, steps: 4, guidance: 1.0,
                    strength: 1.0, seed: nil, allow_oversized: true, batch_size: 1,
                    seeds: nil, enhance_prompt: nil, upscale: nil, workflow: nil,
-                   extra_references: nil, mixins_prompt: nil)
+                   extra_references: nil, mixins_prompt: nil, http_id: nil,
+                   geometry_lock: true)
+        steps = KLEIN_STEPS
+        guidance = KLEIN_GUIDANCE
+        workflow = normalize_workflow(workflow)
         data_url = nil
         sketch_ok = !sketch_path.to_s.empty? && File.file?(sketch_path.to_s)
         if sketch_ok
@@ -393,7 +436,7 @@ module Dn1sup
           "data:#{m2};base64,#{Base64.strict_encode64(File.binread(p.to_s))}"
         end
         refs = [data_url] + refs unless data_url.nil?
-        full_prompt = prompt.to_s
+        full_prompt = apply_geometry_lock(prompt.to_s, geometry_lock)
         mp = mixins_prompt.to_s.strip
         full_prompt = "#{full_prompt}\n#{mp}" unless mp.empty?
         w, h = width, height
@@ -421,7 +464,12 @@ module Dn1sup
           req['Content-Type'] = 'application/json'
           req['Authorization'] = "Bearer #{key}"
           req.body = JSON.generate(body)
-          res = http.request(req)
+          register_http(http_id, http)
+          begin
+            res = http.request(req)
+          ensure
+            unregister_http(http_id)
+          end
           unless res.is_a?(Net::HTTPSuccess)
             msg = res.body.to_s
             if res.code == '422' && [w, h].min < 256
@@ -452,7 +500,13 @@ module Dn1sup
             file_path = url + file_path unless file_path.start_with?('http')
             dl = Net::HTTP::Get.new(URI(file_path).request_uri)
             dl['Authorization'] = "Bearer #{key}"
-            file_res = api(url).request(dl)
+            dl_http = api(url)
+            register_http(http_id, dl_http)
+            begin
+              file_res = dl_http.request(dl)
+            ensure
+              unregister_http(http_id)
+            end
             raise "unsloth: скачивание результата не удалось (HTTP #{file_res.code})" unless file_res.is_a?(Net::HTTPSuccess)
             meta = { 'workflow' => img['workflow'], 'seed' => img['seed'] }
             [file_res.body, meta]
