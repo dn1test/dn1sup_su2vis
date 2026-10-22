@@ -1,29 +1,7 @@
 <template>
   <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full">
-    <div class="shrink-0 px-3 py-2 border-b bg-slate-50 flex gap-1">
-      <button @click="tab = 'settings'"
-        class="flex-1 px-2 py-1 text-xs rounded"
-        :class="tab === 'settings' ? 'bg-slate-900 text-white' : 'hover:bg-slate-200'">Настройки</button>
-      <button @click="tab = 'log'; $emit('load-log')"
-        class="flex-1 px-2 py-1 text-xs rounded"
-        :class="tab === 'log' ? 'bg-slate-900 text-white' : 'hover:bg-slate-200'">Журнал ({{ log.length }})</button>
-    </div>
-    <div v-if="tab === 'log'" class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-1">
-      <div class="flex gap-2">
-        <button class="px-2 py-1 text-xs border rounded hover:bg-slate-100" @click="$emit('load-log')">Обновить</button>
-        <button class="px-2 py-1 text-xs border rounded hover:bg-slate-100" @click="$emit('clear-log')">Очистить</button>
-      </div>
-      <div v-if="!log.length" class="text-xs text-slate-500">Пока пусто.</div>
-      <div v-for="(e, i) in log" :key="i" class="text-[11px] leading-tight border-b last:border-0 py-0.5"
-        :class="e.status === 'error' ? 'text-red-700' : e.event === 'job_done' ? 'font-medium' : 'text-slate-600'">
-        <span class="text-slate-400">{{ e.time }}</span>
-        <span v-if="e.event === 'job_start'"> ▸ {{ e.kind }}: сцены {{ (e.scenes || []).join(',') }}, seed {{ e.seed }}</span>
-        <span v-else-if="e.event === 'scene_done'"> · сцена #{{ e.scene }}<span v-if="e.variant">/в.{{ e.variant + 1 }}</span>, seed {{ e.seed }}, {{ e.size }}, {{ e.gen_s }}с<span v-if="e.file"> → {{ shortFile(e.file) }}</span></span>
-        <span v-else-if="e.event === 'job_done'"> ■ {{ e.status }} за {{ e.total_s }}с<span v-if="e.error">: {{ e.error }}</span></span>
-        <span v-else> {{ e.event }}</span>
-      </div>
-    </div>
-    <div v-show="tab === 'settings'" class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-3">
+    <div class="shrink-0 px-3 py-2 border-b bg-slate-50 font-medium">Настройки</div>
+    <div class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-3">
       <div class="border rounded p-2 text-xs bg-slate-50">
         <div class="text-slate-600 break-all">Папка: {{ modelValue.out_dir }}</div>
       </div>
@@ -38,8 +16,8 @@
           :disabled="enhancePreview && enhancePreview.loading" @click="$emit('enhance-preview')">👁 Показать</button>
       </div>
       <div class="text-xs text-slate-400">Студия сама улучшает промпт апсемплером — как она видит эскиз. Подсмотри и учти в промпте вручную.</div>
-      <div class="border rounded p-2 text-xs bg-slate-50 text-slate-600">
-        Точность линий — под ⚙ во 2-й колонке, размер и доработка финала — под ⚙ в 4-й, дефолты примесей — под ⚙ в 3-й.
+      <div class="text-xs border rounded p-2 bg-slate-50 text-slate-600">
+        Точность линий — под ⚙ в превью, размер и доработка финала — под ⚙ в финале, дефолты примесей — под ⚙ в примесях.
       </div>
       <div class="border rounded p-2 space-y-2">
         <div class="flex items-center justify-between">
@@ -125,10 +103,8 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-const tab = ref('settings')
-const props = defineProps({ modelValue: { type: Object, required: true }, status: { type: Object, default: null }, log: { type: Array, default: () => [] }, enhancePreview: { type: Object, default: null } })
-const emit = defineEmits(['update:modelValue', 'save', 'check', 'load-log', 'clear-log', 'enhance-preview', 'select-out-dir', 'open-out-dir'])
+const props = defineProps({ modelValue: { type: Object, required: true }, status: { type: Object, default: null }, enhancePreview: { type: Object, default: null } })
+const emit = defineEmits(['update:modelValue', 'save', 'check', 'enhance-preview', 'select-out-dir', 'open-out-dir'])
 function upd(key, value) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
 }
@@ -137,9 +113,5 @@ function updSeed(v) {
   const s = String(v ?? '').trim()
   const n = parseInt(s, 10)
   upd('seed', s === '' || Number.isNaN(n) ? -1 : n)
-}
-function shortFile(f) {
-  const s = String(f || '')
-  return s.length > 40 ? '…' + s.slice(-39) : s
 }
 </script>

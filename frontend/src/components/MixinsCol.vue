@@ -4,7 +4,6 @@
       <span class="font-medium flex items-center gap-2">
         <label class="flex items-center gap-1 text-xs font-normal text-slate-500 cursor-pointer" title="Выключить колонку: генерация без примесей (только сцена/промпт)">
           <input type="checkbox" :checked="enabled" @change="emit('toggle-enabled', $event.target.checked)" />
-          вкл
         </label>
         Примеси
       </span>

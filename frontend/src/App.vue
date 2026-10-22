@@ -26,7 +26,7 @@
         @click="recheckProject">Проверить снова</button>
       <button class="shrink-0 px-2 py-1 text-slate-500 hover:text-slate-800" @click="projectDismissed = true">Позже</button>
     </div>
-    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[200px_240px_360px_1fr_340px]">
+    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[200px_240px_360px_340px_1fr]">
       <ScenesCol :scenes="scenes" :selected="selected" :thumbs="thumbs" :enabled="useScenes" :sketch="sketchOpts"
         @toggle="toggle" @toggle-enabled="setUseScenes" @update-sketch="setSketch"
         @refresh="loadScenes" @sync-view="syncView" />
@@ -40,14 +40,15 @@
         :settings="settings" @update-settings="updateColumnSettings"
         @variants="setVariants" @select-preview="selectPreview"
         @preview="startPreview" @stop="stopCurrent" @final-one="finalOne" @delete="deletePreview" @retry="retryFinal" />
+      <SettingsCol v-model="settings" :status="studioStatus" :enhance-preview="enhancePreview"
+        @save="saveSettings" @enhance-preview="previewEnhance" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
       <FinalCol :job="finalAgg" :results="finals" :busy="busy"
         :can-run="previews.length > 0" :final-label="finalLabel" :settings="settings"
         @update-settings="updateColumnSettings"
         @final-all="finalAll" @stop="stopCurrent" @view="viewFinal" @delete="deleteFinal" @retry="retryFinal" />
-      <SettingsCol v-model="settings" :status="studioStatus" :log="jobLog" :enhance-preview="enhancePreview"
-        @save="saveSettings" @load-log="loadLog" @clear-log="clearLog" @enhance-preview="previewEnhance" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
     </div>
-    <StatusBar :text="statusText" :tone="statusTone" />
+    <StatusBar :text="statusText" :tone="statusTone" :log="jobLog" :live="liveLogText"
+      @load-log="loadLog" @clear-log="clearLog" />
     <ConnectionModal v-if="showConnection" v-model="settings" :status="studioStatus" :caps="studioCaps"
       :models="studioModels" :models-loading="modelsLoading" :models-error="modelsError"
       @save="saveSettings" @check="checkStudio" @ensure="ensureStudio" @refresh-models="loadModels" @close="showConnection = false" />
@@ -223,6 +224,28 @@ const statusTone = computed(() => {
   if (previewAgg.value?.status === 'error' || finalAgg.value?.status === 'error') return 'error'
   if (finals.value.length) return 'ok'
   return 'idle'
+})
+
+// Правая часть статусбара: живой прогресс, иначе последняя запись журнала.
+const liveLogText = computed(() => {
+  if (genProgress.value && genProgress.value.active) {
+    const g = genProgress.value
+    const pct = Math.round((g.fraction || 0) * 100)
+    return `денойз ${g.step || 0}/${g.total_steps || 4} (${pct}%)`
+  }
+  const j = activeJob.value
+  if (busy.value && j) {
+    const p = j.progress || {}
+    const total = p.total || 0
+    const done = p.done || 0
+    return `работает ${j.kind === 'final' ? 'финал' : 'превью'}: ${done}/${total}${p.scene !== undefined ? `, сцена #${p.scene}` : ''}`
+  }
+  const e = jobLog.value.length ? jobLog.value[jobLog.value.length - 1] : null
+  if (!e) return 'журнал пуст'
+  if (e.event === 'job_start') return `▸ ${e.kind}: сцены ${(e.scenes || []).join(',')}, seed ${e.seed}`
+  if (e.event === 'scene_done') return `· сцена #${e.scene}, seed ${e.seed}, ${e.size}, ${e.gen_s}с`
+  if (e.event === 'job_done') return `■ ${e.status} за ${e.total_s}с${e.error ? ': ' + e.error : ''}`
+  return String(e.event || 'журнал')
 })
 
 async function loadSettings() {
