@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.15.0] — 2026-10-23
+- Параметры студии со скриншотов — в панель с пояснениями что делают.
+- Превью → ⚙: Steps 4 / Guidance 1.0 показаны как фиксированные (distilled),
+  Batch size с пояснением про VRAM, новый Runs 1–4 (повторы подряд без роста
+  VRAM, перебор сидов); кнопка показывает итог variants × runs.
+- Финал → ⚙: Aspect ratio и Resolution с пояснениями (пропорции / пиксели,
+  потолок 2048).
+- Настройки: Seed с пояснением про воспроизводимость; Memory стал выбором
+  auto/fast/balanced/low_vram (был зафиксирован), Allow oversized с пояснением.
+- Подключение → Advanced: Engine / Speed / Precision / Text encoder precision /
+  Attention / Step cache / Memory / CPU offload / Allow oversized / Live preview
+  + инфо Loaded build; применяется при следующей загрузке модели
+  (`Client.build_load_body`, `ensure_loaded!` пробрасывает тюнинг).
+- `Settings.runs` per-file, `Jobs` крутит превью runs раз подряд (финал всегда ×1).
+
 ## [0.14.2] — 2026-10-23
 - Колонки «Настройки» и «Финал» поменяны местами: настройки — 4-я (340px),
   финал — последний, резиновый.

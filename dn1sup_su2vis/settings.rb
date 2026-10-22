@@ -23,6 +23,7 @@ module Dn1sup
       DEFAULTS = {
         'prompt' => 'Photorealistic render based on the provided sketch. Keep the exact same composition, geometry, proportions and scale of every object. Replace any silhouette scale figures with a real standing person in casual clothing (jeans, t-shirt) for human scale. Soft natural daylight, architectural photography, ultra-detailed, 8k, magazine quality. No watermarks, no logos, no text, no captions, no signatures, no letters, no words anywhere in the image. Clean editorial photograph without any overlay text.',
         'seed' => -1,
+        'runs' => 1,
         'sketch_preset' => '1024x768',
         'sketch_source' => 'hd',
         'sketch_thin_lines' => true,
@@ -43,6 +44,14 @@ module Dn1sup
         'steps' => 4,
         'guidance' => 1.0,
         'memory_mode' => 'balanced',
+        'studio_precision' => 'auto',
+        'studio_text_encoder_precision' => 'default',
+        'studio_attention' => 'auto',
+        'studio_engine' => 'auto',
+        'studio_speed' => 'auto',
+        'studio_step_cache' => 'auto',
+        'studio_cpu_offload' => true,
+        'studio_live_preview' => true,
         'allow_oversized' => true,
         'use_scenes' => true,
         'use_mixins' => true,
@@ -134,7 +143,16 @@ module Dn1sup
         h['steps'] = 4
         h['guidance'] = 1.0
         h['workflow'] = coerce('workflow', h['workflow'])
-        h['memory_mode'] = 'balanced'
+        h['memory_mode'] = coerce('memory_mode', h['memory_mode'])
+        h['runs'] = coerce('runs', h['runs'])
+        h['studio_precision'] = coerce('studio_precision', h['studio_precision'])
+        h['studio_text_encoder_precision'] = coerce('studio_text_encoder_precision', h['studio_text_encoder_precision'])
+        h['studio_attention'] = coerce('studio_attention', h['studio_attention'])
+        h['studio_engine'] = coerce('studio_engine', h['studio_engine'])
+        h['studio_speed'] = coerce('studio_speed', h['studio_speed'])
+        h['studio_step_cache'] = coerce('studio_step_cache', h['studio_step_cache'])
+        h['studio_cpu_offload'] = coerce('studio_cpu_offload', h['studio_cpu_offload'])
+        h['studio_live_preview'] = coerce('studio_live_preview', h['studio_live_preview'])
         h
       end
 
@@ -274,11 +292,33 @@ module Dn1sup
         when 'unsloth_gguf' then value.to_s.empty? ? KLEIN_GGUF : value.to_s
         when 'steps' then 4
         when 'guidance' then 1.0
-        when 'memory_mode' then 'balanced'
+        when 'runs' then value.to_i.clamp(1, 4)
+        when 'memory_mode'
+          s = value.to_s.strip.downcase
+          %w[auto fast balanced low_vram].include?(s) ? s : 'balanced'
+        when 'studio_precision'
+          s = value.to_s.strip.downcase
+          %w[auto off fp16 bf16 int8 fp32].include?(s) ? s : 'auto'
+        when 'studio_text_encoder_precision'
+          s = value.to_s.strip.downcase
+          %w[default auto int8 fp16 bf16 fp32].include?(s) ? s : 'default'
+        when 'studio_attention'
+          s = value.to_s.strip.downcase
+          %w[auto cudnn flash sdpa sage2 sage].include?(s) ? s : 'auto'
+        when 'studio_engine'
+          s = value.to_s.strip.downcase
+          %w[auto diffusers].include?(s) ? s : 'auto'
+        when 'studio_speed'
+          s = value.to_s.strip.downcase
+          %w[auto default fast balanced quality].include?(s) ? s : 'auto'
+        when 'studio_step_cache'
+          s = value.to_s.strip.downcase
+          %w[auto on off].include?(s) ? s : 'auto'
         when 'seed' then value.to_i
         when 'allow_oversized', 'use_scenes', 'use_mixins',
              'sketch_thin_lines', 'sketch_hide_dims', 'sketch_autocrop', 'sketch_white_bg',
-             'unsloth_autostart', 'geometry_lock', 'preview_random_seeds' then value == true || value.to_s == 'true'
+             'unsloth_autostart', 'geometry_lock', 'preview_random_seeds',
+             'studio_cpu_offload', 'studio_live_preview' then value == true || value.to_s == 'true'
         # Студия klein принимает только auto (поле не шлём): edit 400,
         # явный reference 400 со strength. Легаси 'edit' из 0.13.0 мигрирует в auto.
         when 'workflow' then 'auto'

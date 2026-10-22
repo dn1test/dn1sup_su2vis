@@ -13,6 +13,7 @@
     </div>
     <div v-if="showSettings" class="shrink-0 p-3 space-y-2 border-b bg-slate-50/50">
       <div class="text-xs font-medium">Финальный размер</div>
+      <div class="text-xs text-slate-400">Aspect ratio — пропорции кадра. «Размер эскиза» держит композицию сцены, остальные режут/тянут под стандарт.</div>
       <label class="block">
         <span class="text-xs text-slate-500">Aspect ratio</span>
         <div class="mt-1 flex gap-1">
@@ -31,6 +32,7 @@
       </label>
       <div>
         <span class="text-xs text-slate-500">Resolution</span>
+        <div class="text-xs text-slate-400">Размер в пикселях. Больше = детальнее, но жрёт VRAM; потолок студии 2048 по длинной. Выше эскиза детали додумываются.</div>
         <div class="mt-1 grid grid-cols-2 gap-2">
           <select :value="Number(settings.final_w)" @change="updWH('final_w', +$event.target.value)"
             class="w-full border rounded p-1.5 text-xs bg-white">

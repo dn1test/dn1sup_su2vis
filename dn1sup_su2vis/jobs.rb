@@ -141,7 +141,7 @@ module Dn1sup
 
         Log.append('job_start', 'id' => job.id, 'kind' => job.kind, 'scenes' => scenes,
                    'seed' => s['seed'], 'preview' => s['preview_preset'], 'final' => s['final_mode'])
-        Client.ensure_loaded!(url, key, s['unsloth_model'], s['unsloth_gguf'], s['memory_mode'])
+        Client.ensure_loaded!(url, key, s['unsloth_model'], s['unsloth_gguf'], s['memory_mode'], s)
 
         seed_base = s['seed'].to_i
         seed_base = Random.new_seed % 2_147_483_647 if seed_base < 0
@@ -149,6 +149,13 @@ module Dn1sup
         preview_px = Settings.preview_px(s['preview_preset'])
         out_dir = s['out_dir'].to_s.empty? ? Settings.out_dir : s['out_dir'].to_s
         FileUtils.mkdir_p(out_dir) if job.kind == 'final'
+        # Runs — последовательные повторы генерации (перебор сидов без роста
+        # VRAM, в отличие от batch). Финал детерминирован от сида превью —
+        # runs там игнорируется (всегда 1).
+        runs = job.kind == 'preview' ? s['runs'].to_i.clamp(1, 4) : 1
+        runs = 1 if runs < 1
+        total_steps = scenes.size * runs
+        done_steps = 0
 
         scenes.each_with_index do |idx, n|
           check_cancel!(job)
@@ -157,7 +164,7 @@ module Dn1sup
           rescue StandardError
             raise "студия недоступна (#{url}) — проверь, что `unsloth studio` запущена, и повтори"
           end
-          job.progress = { done: n, total: scenes.size, scene: idx }
+          job.progress = { done: done_steps, total: total_steps, scene: idx }
           sketch =
             if idx.nil?
               # Без сцены: превью финала лежит под ключом 'prompt' (см. фронт
@@ -203,56 +210,63 @@ module Dn1sup
             else
               final_size(s, w0, h0)
             end
-          seed = (seeds[idx.to_s] || seeds[idx] || seeds['prompt'] || seeds['null'] || seed_base + idx.to_i).to_i
+          base_seed = (seeds[idx.to_s] || seeds[idx] || seeds['prompt'] || seeds['null'] || seed_base + idx.to_i).to_i
           batch = job.kind == 'preview' ? s['preview_variants'].to_i.clamp(1, 4) : 1
-          batch_seeds = batch_seed_list(seed, batch, job.kind == 'preview' ? s['preview_random_seeds'] : false)
-          t_gen = Time.now
-          gen_strength = job.kind == 'final' && from_prev ? s.fetch('final_strength', s['strength']).to_f : s['strength'].to_f
+          random_seeds = job.kind == 'preview' ? s['preview_random_seeds'] : false
           # Примеси: активные референсы + подписи -> дописка к промпту.
           # Превью и финал учитывают их одинаково; apply_to режет по стадии.
           mix = Mixins.active_for_job(job.params['mixins'] || s['mixins'], job.kind)
           # Большие референсы — через ужатые копии (студия режет > 4096px).
           mix_paths = mix.map { |m| Mixins.job_path(m['path'], m['crop'], m['rotation']) }
           mp = Client.mixins_prompt(mix)
-          # Студия klein: workflow всегда auto (поле не шлём), upscale не шлём,
-          # enhance-флаг игнорируется — не шлём. strength действует только в auto.
-          items, gw, gh = Client.generate(
-            url, key, sketch,
-            prompt: s['prompt'], width: w, height: h,
-            steps: s['steps'].to_i, guidance: s['guidance'].to_f,
-            strength: gen_strength, seed: batch_seeds.first,
-            allow_oversized: s['allow_oversized'] == true || s['allow_oversized'].to_s == 'true',
-            batch_size: batch, seeds: batch_seeds,
-            extra_references: mix_paths, mixins_prompt: mp,
-            http_id: job.id, geometry_lock: s.fetch('geometry_lock', true)
-          )
-          gen_s = (Time.now - t_gen).round(1)
-          items.each_with_index do |(bytes, meta), i|
-            vsed = meta['seed'] || batch_seeds[i] || seed
-            entry = { scene: idx, variant: i, seed: vsed, width: gw, height: gh,
-                      workflow: meta['workflow'] }
-            gmeta = gallery_meta(s, idx, vsed, i, gw, gh, from_prev)
-            if job.kind == 'final'
-              ext = (s['ext'] || 'jpg').to_s.sub(/^\./, '')
-              entry[:file] = File.join(out_dir, expand_name(s, idx, vsed) + ".#{ext}")
-              File.binwrite(entry[:file], bytes)
-              # Файл обязан лежать на диске: иначе вместо фантомной карточки
-              # с вечной «загрузкой» задача сразу падает с понятной ошибкой.
-              raise "файл результата не записался: #{entry[:file]}" unless File.file?(entry[:file]) && File.size(entry[:file]) > 0
-              Gallery.save_sidecar(entry[:file], 'final', gmeta)
-            else
-              require 'base64'
-              entry[:data_url] = "data:image/png;base64,#{Base64.strict_encode64(bytes)}"
-              entry[:file] = Gallery.save_preview(out_dir, bytes, gmeta)
+          runs.times do |r|
+            check_cancel!(job)
+            run_seed = random_seeds == true || random_seeds.to_s == 'true' ? Random.new_seed % 2_147_483_647 : base_seed + r * batch
+            batch_seeds = batch_seed_list(run_seed, batch, random_seeds)
+            t_gen = Time.now
+            gen_strength = job.kind == 'final' && from_prev ? s.fetch('final_strength', s['strength']).to_f : s['strength'].to_f
+            # Студия klein: workflow всегда auto (поле не шлём), upscale не шлём,
+            # enhance-флаг игнорируется — не шлём. strength действует только в auto.
+            items, gw, gh = Client.generate(
+              url, key, sketch,
+              prompt: s['prompt'], width: w, height: h,
+              steps: s['steps'].to_i, guidance: s['guidance'].to_f,
+              strength: gen_strength, seed: batch_seeds.first,
+              allow_oversized: s['allow_oversized'] == true || s['allow_oversized'].to_s == 'true',
+              batch_size: batch, seeds: batch_seeds,
+              extra_references: mix_paths, mixins_prompt: mp,
+              http_id: job.id, geometry_lock: s.fetch('geometry_lock', true)
+            )
+            gen_s = (Time.now - t_gen).round(1)
+            items.each_with_index do |(bytes, meta), i|
+              vsed = meta['seed'] || batch_seeds[i] || run_seed
+              entry = { scene: idx, variant: r * batch + i, seed: vsed, width: gw, height: gh,
+                        workflow: meta['workflow'] }
+              gmeta = gallery_meta(s, idx, vsed, r * batch + i, gw, gh, from_prev)
+              if job.kind == 'final'
+                ext = (s['ext'] || 'jpg').to_s.sub(/^\./, '')
+                entry[:file] = File.join(out_dir, expand_name(s, idx, vsed) + ".#{ext}")
+                File.binwrite(entry[:file], bytes)
+                # Файл обязан лежать на диске: иначе вместо фантомной карточки
+                # с вечной «загрузкой» задача сразу падает с понятной ошибкой.
+                raise "файл результата не записался: #{entry[:file]}" unless File.file?(entry[:file]) && File.size(entry[:file]) > 0
+                Gallery.save_sidecar(entry[:file], 'final', gmeta)
+              else
+                require 'base64'
+                entry[:data_url] = "data:image/png;base64,#{Base64.strict_encode64(bytes)}"
+                entry[:file] = Gallery.save_preview(out_dir, bytes, gmeta)
+              end
+              job.results << entry
+              Log.append('scene_done', 'id' => job.id, 'scene' => idx, 'variant' => r * batch + i,
+                         'seed' => vsed, 'size' => "#{gw}x#{gh}", 'gen_s' => gen_s,
+                         'file' => entry[:file])
             end
-            job.results << entry
-            Log.append('scene_done', 'id' => job.id, 'scene' => idx, 'variant' => i,
-                       'seed' => vsed, 'size' => "#{gw}x#{gh}", 'gen_s' => gen_s,
-                       'file' => entry[:file])
+            done_steps += 1
+            job.progress = { done: done_steps, total: total_steps, scene: idx }
+            check_cancel!(job)
           end
-          check_cancel!(job)
         end
-        job.progress = { done: scenes.size, total: scenes.size }
+        job.progress = { done: done_steps, total: total_steps }
         job.status = 'done'
         Log.append('job_done', 'id' => job.id, 'status' => 'done', 'total_s' => (Time.now - t_job).round(1))
         maybe_pump_stop
@@ -298,6 +312,7 @@ module Dn1sup
           'strength' => s['strength'], 'steps' => s['steps'],
           'guidance' => s['guidance'], 'workflow' => 'auto',
           'geometry_lock' => s.fetch('geometry_lock', true),
+          'runs' => s['runs'],
           'final_strength' => s['final_strength'], 'from_preview' => from_prev,
           'mixins' => Array(s['mixins']).map { |m| m.is_a?(Hash) ? { 'file' => File.basename((m['path'] || m['file'] || '').to_s), 'caption' => (m['caption'] || '').to_s, 'caption_neg' => (m['caption_neg'] || '').to_s, 'role' => (m['role'] || 'auto').to_s, 'weight' => (m['weight'] || 1.0).to_f, 'apply_to' => (m['apply_to'] || 'both').to_s, 'crop' => Mixins.norm_crop(m['crop'] || m[:crop]), 'rotation' => Mixins.norm_rotation(m['rotation'] || m[:rotation]) } : nil }.compact,
           'model' => [s['unsloth_model'], s['unsloth_gguf']].compact.join('/') }

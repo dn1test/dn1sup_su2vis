@@ -63,6 +63,134 @@
           <div class="font-medium">Сейчас в студии:</div>
           <div class="break-all text-slate-600">{{ currentStatus }}</div>
         </div>
+        <details class="border rounded" open>
+          <summary class="px-2 py-1 cursor-pointer text-xs text-slate-600">⚙ Advanced — load-time тюнинг (применяется при следующей загрузке)</summary>
+          <div class="p-2 space-y-2">
+            <div class="text-[11px] text-slate-500">Меняют загрузку модели, не отдельную генерацию. После смены — переоткройте панель или дождитесь перезагрузки модели.</div>
+            <div class="grid grid-cols-2 gap-2">
+              <div class="block">
+                <span class="text-xs text-slate-500">Family</span>
+                <div class="mt-1 w-full border rounded p-1.5 text-xs bg-slate-50 text-slate-600">FLUX.3-KLEIN (auto)</div>
+              </div>
+              <div class="block">
+                <span class="text-xs text-slate-500">On model selection</span>
+                <div class="mt-1 w-full border rounded p-1.5 text-xs bg-slate-50 text-slate-600">Download and load</div>
+              </div>
+            </div>
+            <div class="text-[11px] text-slate-500">Family — семейство модели, зафиксировано на klein. On model selection — скачать квант при выборе и загрузить.</div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="block">
+                <span class="text-xs text-slate-500">Engine</span>
+                <select :value="modelValue.studio_engine || 'auto'" @change="upd('studio_engine', $event.target.value)"
+                  class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+                  <option value="auto">Auto</option>
+                  <option value="diffusers">diffusers</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="text-xs text-slate-500">Speed</span>
+                <select :value="modelValue.studio_speed || 'auto'" @change="upd('studio_speed', $event.target.value)"
+                  class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+                  <option value="auto">Auto</option>
+                  <option value="default">Default</option>
+                  <option value="fast">Fast</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="quality">Quality</option>
+                </select>
+              </label>
+            </div>
+            <div class="text-[11px] text-slate-500">Engine — бэкенд инференса. Speed — пресет скорость/качество.</div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="block">
+                <span class="text-xs text-slate-500">Precision</span>
+                <select :value="modelValue.studio_precision || 'auto'" @change="upd('studio_precision', $event.target.value)"
+                  class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+                  <option value="auto">Auto (fastest)</option>
+                  <option value="off">Off</option>
+                  <option value="fp16">FP16</option>
+                  <option value="bf16">BF16</option>
+                  <option value="int8">INT8</option>
+                  <option value="fp32">FP32</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="text-xs text-slate-500">Text encoder precision</span>
+                <select :value="modelValue.studio_text_encoder_precision || 'default'" @change="upd('studio_text_encoder_precision', $event.target.value)"
+                  class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+                  <option value="default">Default</option>
+                  <option value="auto">Auto</option>
+                  <option value="int8">INT8</option>
+                  <option value="fp16">FP16</option>
+                  <option value="bf16">BF16</option>
+                  <option value="fp32">FP32</option>
+                </select>
+              </label>
+            </div>
+            <div class="text-[11px] text-slate-500">Precision — точность трансформера (выше = чуть лучше свет/градиенты, но больше VRAM). Text encoder — точность понимания промпта (ниже = хуже слушается длинный промпт).</div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="block">
+                <span class="text-xs text-slate-500">Attention</span>
+                <select :value="modelValue.studio_attention || 'auto'" @change="upd('studio_attention', $event.target.value)"
+                  class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+                  <option value="auto">Auto</option>
+                  <option value="cudnn">cuDNN</option>
+                  <option value="flash">Flash</option>
+                  <option value="sdpa">SDPA</option>
+                  <option value="sage">Sage</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="text-xs text-slate-500">Step cache</span>
+                <select :value="modelValue.studio_step_cache || 'auto'" @change="upd('studio_step_cache', $event.target.value)"
+                  class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+                  <option value="auto">Auto</option>
+                  <option value="on">On</option>
+                  <option value="off">Off</option>
+                </select>
+              </label>
+            </div>
+            <div class="text-[11px] text-slate-500">Attention — реализация внимания (на качество почти не влияет, решает скорость/VRAM). Step cache — кеш шагов: быстрее, ценой микропотери точности (на 4 шагах klein выигрыш мал).</div>
+            <label class="block">
+              <span class="text-xs text-slate-500">Text encoder file(s)</span>
+              <div class="mt-1 w-full border rounded p-1.5 text-xs bg-slate-50 text-slate-500 break-all">../text_encoders/clip_l.safetensors (студия)</div>
+            </label>
+            <label class="block">
+              <span class="text-xs text-slate-500">VAE file</span>
+              <div class="mt-1 w-full border rounded p-1.5 text-xs bg-slate-50 text-slate-500 break-all">../vae/ae.safetensors (студия)</div>
+            </label>
+            <div class="text-[11px] text-slate-500">Пути к кастомным файлам — только в студии, сюда не выносим: легко сломать генерацию.</div>
+            <label class="block">
+              <span class="text-xs text-slate-500">Memory</span>
+              <select :value="modelValue.memory_mode || 'balanced'" @change="upd('memory_mode', $event.target.value)"
+                class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+                <option value="auto">Auto</option>
+                <option value="fast">Fast</option>
+                <option value="balanced">Balanced</option>
+                <option value="low_vram">Low VRAM</option>
+              </select>
+            </label>
+            <div class="text-[11px] text-slate-500">Memory — как делить веса GPU/RAM (balanced = скорость почти как resident, но заметно меньше VRAM).</div>
+            <label class="flex items-center justify-between gap-2 text-xs text-slate-700">
+              <span>CPU offload <span class="text-slate-400">— сгружать часть в RAM: влезет 2K на слабой карте, но медленнее</span></span>
+              <input type="checkbox" :checked="modelValue.studio_cpu_offload !== false"
+                @change="upd('studio_cpu_offload', $event.target.checked)" />
+            </label>
+            <label class="flex items-center justify-between gap-2 text-xs text-slate-700">
+              <span>Allow oversized generations <span class="text-slate-400">— генерить, даже если оценка VRAM против (риск OOM)</span></span>
+              <input type="checkbox" :checked="modelValue.allow_oversized !== false"
+                @change="upd('allow_oversized', $event.target.checked)" />
+            </label>
+            <label class="flex items-center justify-between gap-2 text-xs text-slate-700">
+              <span>Live preview <span class="text-slate-400">— живой денойз-процент в статусбаре (только показ)</span></span>
+              <input type="checkbox" :checked="modelValue.studio_live_preview !== false"
+                @change="upd('studio_live_preview', $event.target.checked)" />
+            </label>
+            <div v-if="loadedBuild" class="text-[11px] border rounded p-2 bg-slate-50 space-y-0.5">
+              <div class="font-medium text-xs">Loaded build:</div>
+              <div class="break-all text-slate-600">{{ loadedBuild }}</div>
+            </div>
+          </div>
+        </details>
         <div v-if="pipelineCaps" class="text-xs border rounded p-2 bg-slate-50 space-y-0.5">
           <div class="font-medium">Возможности image-пайплайна:</div>
           <div class="break-all text-slate-600">{{ pipelineCaps }}</div>
@@ -144,6 +272,21 @@ const pipelineCaps = computed(() => {
   bits.push(sup.length ? `умеет: ${sup.join(', ')}` : 'без LoRA/ControlNet/негатива')
   const eng = [c.engine, c.device, c.memory_mode].filter(Boolean).join(' / ')
   if (eng) bits.push(eng)
+  return bits.join(' · ')
+})
+// Loaded build: что реально загружено в студии (трансформер/текст-энкодер/память/внимание).
+const loadedBuild = computed(() => {
+  const c = props.caps
+  if (!c || typeof c !== 'object') return ''
+  const bits = []
+  const gguf = c.gguf_filename || c.gguf_file || ''
+  if (gguf) bits.push(`Transformer ${gguf} (GGUF as-is)`)
+  else if (c.repo_id) bits.push(`Transformer ${c.repo_id}`)
+  if (c.text_encoder_precision) bits.push(`Text encoder ${c.text_encoder_precision}`)
+  if (c.memory_mode) bits.push(`Memory ${c.memory_mode}`)
+  if (c.attention) bits.push(`Attention ${c.attention}`)
+  if (c.engine) bits.push(`Engine ${c.engine}`)
+  if (c.precision) bits.push(`Precision ${c.precision}`)
   return bits.join(' · ')
 })
 </script>

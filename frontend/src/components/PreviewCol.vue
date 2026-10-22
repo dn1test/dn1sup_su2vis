@@ -14,6 +14,10 @@
     <div v-if="showSettings" class="shrink-0 p-3 space-y-2 border-b bg-slate-50/50">
       <div class="text-xs font-medium">Точность линий</div>
       <div class="text-xs text-slate-400">Студия klein всегда работает в auto-режиме по эскизу: free-ран контролируется силой и текстом промпта.</div>
+      <div class="text-xs border rounded p-2 bg-white text-slate-600 space-y-0.5">
+        <div><span class="font-medium">Steps 4</span> — число шагов денойза. У klein distilled строго 4: больше = «пережар», меньше = каша. Зафиксировано студией.</div>
+        <div><span class="font-medium">Guidance 1.0</span> — сила следования промпту. У klein строго 1.0: выше = артефакты и кривая геометрия. Зафиксировано.</div>
+      </div>
       <label class="block">
         <span class="flex items-center justify-between text-xs"><span class="font-medium">Свобода модели</span><span>{{ settings.strength }}</span></span>
         <input type="range" min="0.05" max="1" step="0.05" :value="settings.strength"
@@ -30,6 +34,13 @@
         <input type="range" min="1" max="4" step="1" :value="Number(settings.preview_variants) || 1"
           @change="$emit('variants', +$event.target.value)" class="w-full accent-slate-900" />
       </label>
+      <div class="text-xs text-slate-400">Batch size — сколько картинок генерить за один запрос параллельно. Больше = больше выбор, но линейно растёт VRAM.</div>
+      <label class="block">
+        <span class="flex items-center justify-between text-xs"><span class="font-medium">Runs</span><span>{{ Number(settings.runs) || 1 }}</span></span>
+        <input type="range" min="1" max="4" step="1" :value="Number(settings.runs) || 1"
+          @change="upd('runs', +$event.target.value)" class="w-full accent-slate-900" />
+      </label>
+      <div class="text-xs text-slate-400">Runs — сколько раз подряд повторить генерацию последовательно. Тот же перебор сидов, что batch, но без роста VRAM — дольше по времени.</div>
       <label class="flex items-start gap-2">
         <input type="checkbox" class="mt-0.5" :checked="settings.preview_random_seeds !== false" @change="upd('preview_random_seeds', $event.target.checked)" />
         <span class="text-xs"><span class="font-medium">Случайные сиды</span><br />
@@ -52,7 +63,7 @@
       <div class="flex gap-2">
         <button :disabled="!canRun || busy" @click="$emit('preview')"
           class="flex-1 px-3 py-2 rounded bg-blue-600 text-white text-xs disabled:opacity-40 hover:bg-blue-500">
-          Превью (256px × {{ variants }})
+          Превью (256px × {{ (variants || 1) * (Number(settings.runs) || 1) }})
         </button>
         <button v-if="busy" @click="$emit('stop')"
           class="px-3 py-2 rounded bg-red-600 text-white text-xs hover:bg-red-500">Стоп</button>

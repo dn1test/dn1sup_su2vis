@@ -611,11 +611,12 @@ function startPoll(kind) {
 async function pollJob() {
   const list = pollKind === 'final' ? finalJobs.value : previewJobs.value
   if (!list.length) return
+  const live = settings.value.studio_live_preview !== false
   const polls = await Promise.all([
     ...list.map((job) => callRuby('jobs_poll', { id: job.id })),
-    callRuby('gen_progress')
+    ...(live ? [callRuby('gen_progress')] : [])
   ])
-  const g = polls[polls.length - 1]
+  const g = live ? polls[polls.length - 1] : null
   genProgress.value = g && g.active ? g : null
   const updated = polls.slice(0, list.length)
   if (pollKind === 'preview') {

@@ -248,9 +248,36 @@ module Dn1sup
       # запускать только из рабочего Thread (см. jobs.rb).
       # Только klein: repo фиксировано. Квант — запрошенный gguf
       # (выбор в окне «Подключение»); пусто — уже загруженный или дефолт.
-      def ensure_loaded!(url, key, _model_path = nil, gguf_filename = nil, _memory_mode = nil)
+      # opts — load-time тюнинг из Advanced (precision/attention/...):
+      # не-auto значения уходят в тело /load, auto — не шлём (студия решает сама).
+      def build_load_body(model_path, gguf_filename, memory_mode, opts = nil)
+        o = opts.is_a?(Hash) ? opts : {}
+        body = { model_path: model_path, memory_mode: memory_mode,
+                 gguf_filename: gguf_filename, model_kind: 'gguf' }
+        prec = o['studio_precision'] || o[:studio_precision]
+        body[:precision] = prec.to_s if prec && !prec.to_s.strip.empty? && prec.to_s.strip.downcase != 'auto'
+        tep = o['studio_text_encoder_precision'] || o[:studio_text_encoder_precision]
+        body[:text_encoder_precision] = tep.to_s if tep && !tep.to_s.strip.empty? && tep.to_s.strip.downcase != 'default' && tep.to_s.strip.downcase != 'auto'
+        att = o['studio_attention'] || o[:studio_attention]
+        body[:attention] = att.to_s if att && !att.to_s.strip.empty? && att.to_s.strip.downcase != 'auto'
+        eng = o['studio_engine'] || o[:studio_engine]
+        body[:engine] = eng.to_s if eng && !eng.to_s.strip.empty? && eng.to_s.strip.downcase != 'auto'
+        spd = o['studio_speed'] || o[:studio_speed]
+        body[:speed] = spd.to_s if spd && !spd.to_s.strip.empty? && spd.to_s.strip.downcase != 'auto'
+        sc = o['studio_step_cache'] || o[:studio_step_cache]
+        body[:step_cache] = sc.to_s if sc && !sc.to_s.strip.empty? && sc.to_s.strip.downcase != 'auto'
+        if o.key?('studio_cpu_offload') || o.key?(:studio_cpu_offload)
+          v = o['studio_cpu_offload'].nil? ? o[:studio_cpu_offload] : o['studio_cpu_offload']
+          body[:cpu_offload] = (v == true || v.to_s == 'true')
+        end
+        body
+      end
+
+      def ensure_loaded!(url, key, _model_path = nil, gguf_filename = nil, _memory_mode = nil, opts = nil)
         model_path = KLEIN_REPO
-        memory_mode = KLEIN_MEMORY_MODE
+        o = opts.is_a?(Hash) ? opts : {}
+        mm = o['memory_mode'] || o[:memory_mode] || _memory_mode
+        memory_mode = %w[auto fast balanced low_vram].include?(mm.to_s.strip.downcase) ? mm.to_s.strip.downcase : KLEIN_MEMORY_MODE
         st = status(url, key)
         want = gguf_filename.to_s
         if st['loaded'] && st['repo_id'] == model_path &&
@@ -259,8 +286,7 @@ module Dn1sup
         end
         gguf_filename = want.empty? ? KLEIN_GGUF : want
 
-        body = { model_path: model_path, memory_mode: memory_mode,
-                 gguf_filename: gguf_filename, model_kind: 'gguf' }
+        body = build_load_body(model_path, gguf_filename, memory_mode, o)
         http = api(url)
         req = Net::HTTP::Post.new('/api/inference/images/load')
         req['Content-Type'] = 'application/json'

@@ -35,10 +35,11 @@
             :value="modelValue.seed < 0 ? '' : modelValue.seed" @input="updSeed($event.target.value)"
             class="mt-1 w-full border rounded p-1.5" />
         </label>
+        <div class="text-xs text-slate-400">Seed — зерно случайности. Пусто = случайно каждый раз; число = повтор даёт попиксельно тот же результат. Главный инструмент воспроизводимости.</div>
       </div>
       <div class="space-y-2">
         <div class="text-xs border rounded p-2 bg-slate-50 text-slate-600">
-          Модель klein distilled: steps 4 · guidance 1.0 (фиксировано)
+          Модель klein distilled: steps 4 · guidance 1.0 (фиксировано). Steps — число шагов денойза, guidance — сила следования промпту. На klein другие значения не работают.
         </div>
       </div>
       <details class="border rounded">
@@ -82,15 +83,22 @@
         </label>
       </div>
       <div class="grid grid-cols-2 gap-2">
-        <div class="block">
-          <span class="text-xs text-slate-500">Память (klein: balanced)</span>
-          <div class="mt-1 w-full border rounded p-1.5 bg-slate-50 text-xs text-slate-600">balanced</div>
-        </div>
+        <label class="block">
+          <span class="text-xs text-slate-500">Память (Memory)</span>
+          <select :value="modelValue.memory_mode || 'balanced'" @change="upd('memory_mode', $event.target.value)"
+            class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+            <option value="auto">auto</option>
+            <option value="fast">fast</option>
+            <option value="balanced">balanced</option>
+            <option value="low_vram">low_vram</option>
+          </select>
+        </label>
         <label class="flex items-end gap-2 pb-1">
           <input type="checkbox" :checked="modelValue.allow_oversized" @change="upd('allow_oversized', $event.target.checked)" />
           <span class="text-xs">Allow oversized</span>
         </label>
       </div>
+      <div class="text-xs text-slate-400">Memory — как делить веса GPU/RAM при загрузке (balanced = скорость почти как resident, но меньше VRAM). Allow oversized — генерить, даже если оценка VRAM говорит «не влезет» (риск OOM или медленно через RAM). Применяются при следующей загрузке модели.</div>
       <div class="flex gap-2">
         <button class="flex-1 px-3 py-2 rounded bg-slate-900 text-white text-xs hover:bg-slate-700" @click="$emit('save')">Сохранить</button>
       </div>

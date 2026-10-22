@@ -302,6 +302,14 @@ module Dn1sup
         assert(content.include?('Для новых примесей'), 'panel.html без дефолтов примесей в 3-й колонке — устаревшая сборка')
         assert(content.include?('360px'), 'panel.html без фиксированной ширины превью 360px — устаревшая сборка')
         assert(content.include?('Случайные сиды'), 'panel.html без тумблера случайных сидов — устаревшая сборка')
+        assert(content.include?('Runs'), 'panel.html без повторов Runs — устаревшая сборка')
+        assert(content.include?('Precision'), 'panel.html без точности Precision — устаревшая сборка')
+        assert(content.include?('Text encoder precision'), 'panel.html без точности текст-энкодера — устаревшая сборка')
+        assert(content.include?('Attention'), 'panel.html без выбора attention — устаревшая сборка')
+        assert(content.include?('Step cache'), 'panel.html без степ-кеша — устаревшая сборка')
+        assert(content.include?('CPU offload'), 'panel.html без CPU offload — устаревшая сборка')
+        assert(content.include?('Live preview'), 'panel.html без live preview — устаревшая сборка')
+        assert(content.include?('Loaded build'), 'panel.html без блока loaded build — устаревшая сборка')
         assert(!content.include?('select-all'), 'panel.html с кнопкой Все — устаревшая сборка')
         assert(content.bytesize > 50_000, 'panel.html подозрительно мал — бандл не встроен')
       end
@@ -403,7 +411,10 @@ module Dn1sup
         assert_equal('auto', Settings.coerce('workflow', 'EDIT'))
         assert_equal('auto', Settings.coerce('workflow', 'reference'))
         assert_equal('auto', Settings.coerce('workflow', 'auto'))
-        assert_equal('balanced', Settings.coerce('memory_mode', 'low_vram'))
+        assert_equal('low_vram', Settings.coerce('memory_mode', 'low_vram'))
+        assert_equal('balanced', Settings.coerce('memory_mode', 'мусор'))
+        assert_equal('auto', Settings.coerce('memory_mode', 'auto'))
+        assert_equal('fast', Settings.coerce('memory_mode', 'fast'))
       end
 
       test 'client: pick_variant берёт точный файл, сначала скачанный' do
@@ -1110,6 +1121,56 @@ module Dn1sup
         skip('нет собранной панели') unless File.file?(html)
         content = File.read(html, encoding: 'UTF-8')
         assert(content.include?('enhance_poll'), 'panel.html без опроса enhance — устаревшая сборка')
+      end
+
+      test 'runs: дефолт 1, coerce 1..4' do
+        assert_equal(1, Settings::DEFAULTS['runs'])
+        assert(Settings::PROJECT_KEYS.include?('runs'), 'runs должен быть per-file')
+        assert_equal(1, Settings.coerce('runs', 0))
+        assert_equal(1, Settings.coerce('runs', nil))
+        assert_equal(4, Settings.coerce('runs', 99))
+        assert_equal(2, Settings.coerce('runs', 2))
+      end
+
+      test 'advanced load-time: дефолты и coerce' do
+        assert_equal('auto', Settings::DEFAULTS['studio_precision'])
+        assert_equal('default', Settings::DEFAULTS['studio_text_encoder_precision'])
+        assert_equal('auto', Settings::DEFAULTS['studio_attention'])
+        assert_equal('auto', Settings::DEFAULTS['studio_engine'])
+        assert_equal('auto', Settings::DEFAULTS['studio_speed'])
+        assert_equal('auto', Settings::DEFAULTS['studio_step_cache'])
+        assert_equal(true, Settings::DEFAULTS['studio_cpu_offload'])
+        assert_equal(true, Settings::DEFAULTS['studio_live_preview'])
+        assert_equal('fp16', Settings.coerce('studio_precision', 'FP16'))
+        assert_equal('auto', Settings.coerce('studio_precision', 'мусор'))
+        assert_equal('int8', Settings.coerce('studio_text_encoder_precision', 'INT8'))
+        assert_equal('default', Settings.coerce('studio_text_encoder_precision', 'мусор'))
+        assert_equal('cudnn', Settings.coerce('studio_attention', 'cuDNN'))
+        assert_equal('auto', Settings.coerce('studio_attention', 'мусор'))
+        assert_equal('diffusers', Settings.coerce('studio_engine', 'diffusers'))
+        assert_equal('auto', Settings.coerce('studio_engine', 'мусор'))
+        assert_equal('fast', Settings.coerce('studio_speed', 'fast'))
+        assert_equal('auto', Settings.coerce('studio_speed', 'мусор'))
+        assert_equal('on', Settings.coerce('studio_step_cache', 'on'))
+        assert_equal('auto', Settings.coerce('studio_step_cache', 'мусор'))
+        assert_equal(false, Settings.coerce('studio_cpu_offload', false))
+        assert_equal(true, Settings.coerce('studio_cpu_offload', 'true'))
+        assert_equal(false, Settings.coerce('studio_live_preview', 'false'))
+      end
+
+      test 'client: build_load_body шлёт только не-auto тюнинг' do
+        b = Client.build_load_body('repo', 'f.gguf', 'balanced', {})
+        assert_equal('repo', b[:model_path])
+        assert_equal('balanced', b[:memory_mode])
+        assert(!b.key?(:precision), "пустые opts не должны слать precision: #{b.inspect}")
+        assert(!b.key?(:cpu_offload), "без флага не шлём cpu_offload: #{b.inspect}")
+        b2 = Client.build_load_body('repo', 'f.gguf', 'low_vram',
+                                    { 'studio_precision' => 'fp16', 'studio_attention' => 'cudnn',
+                                      'studio_cpu_offload' => false, 'studio_step_cache' => 'auto' })
+        assert_equal('fp16', b2[:precision])
+        assert_equal('cudnn', b2[:attention])
+        assert_equal(false, b2[:cpu_offload])
+        assert(!b2.key?(:step_cache), "auto step_cache не шлём: #{b2.inspect}")
       end
     end
   end
