@@ -142,20 +142,6 @@ module Dn1sup
         Log.append('job_start', 'id' => job.id, 'kind' => job.kind, 'scenes' => scenes,
                    'seed' => s['seed'], 'preview' => s['preview_preset'], 'final' => s['final_mode'])
         Client.ensure_loaded!(url, key, s['unsloth_model'], s['unsloth_gguf'], s['memory_mode'])
-        # Апсемплер промпта поддерживает не каждая модель (напр. FLUX.2-klein:
-        # supports_prompt_upsampler=false) — при enhance=true студия отвечает
-        # HTTP 500. Глушим enhance для таких моделей, в лог — пометку.
-        enhance = s['enhance_prompt'] == true || s['enhance_prompt'].to_s == 'true'
-        begin
-          cap = Client.status(url, key)
-          if cap && !cap['supports_prompt_upsampler'] && enhance
-            enhance = false
-            Log.append('enhance_off', 'id' => job.id,
-                       'reason' => "модель #{cap['repo_id']} без апсемплера")
-          end
-        rescue StandardError
-          nil
-        end
 
         seed_base = s['seed'].to_i
         seed_base = Random.new_seed % 2_147_483_647 if seed_base < 0
@@ -194,9 +180,10 @@ module Dn1sup
               end
               cap.to_s
             end
-          # Финал идёт из байтов превью (from_preview): тот же сюжет seed'ом
-          # не воспроизводится — студия недетерминирована. Сила доработки —
-          # final_strength (по умолчанию 0.4), размер — обратно до HD.
+          # Финал идёт из байтов превью (from_preview): тот же seed на новом
+          # init_image даёт тот же сюжет (студия детерминирована — доказано
+          # повтором seed 7), но доработка идёт поверх картинки превью.
+          # Сила доработки — final_strength (по умолчанию 0.4), размер — обратно до HD.
           from_prev = job.kind == 'final' && (s['from_preview'] == true || s['from_preview'].to_s == 'true')
           # Без эскиза пропорций нет — берём из общих настроек финала.
           w0, h0 = sketch ? (Scenes.dims(sketch) || [1024, 1024]) : default_dims(s)
@@ -218,10 +205,7 @@ module Dn1sup
             end
           seed = (seeds[idx.to_s] || seeds[idx] || seeds['prompt'] || seeds['null'] || seed_base + idx.to_i).to_i
           batch = job.kind == 'preview' ? s['preview_variants'].to_i.clamp(1, 4) : 1
-          batch_seeds = batch.times.map { |i| seed + i }
-          wf = s['workflow'].to_s
-          wf = nil if wf.empty? || wf == 'auto'
-          up = (job.kind == 'final' ? s['final_upscale'].to_f : 0)
+          batch_seeds = batch_seed_list(seed, batch, job.kind == 'preview' ? s['preview_random_seeds'] : false)
           t_gen = Time.now
           gen_strength = job.kind == 'final' && from_prev ? s.fetch('final_strength', s['strength']).to_f : s['strength'].to_f
           # Примеси: активные референсы + подписи -> дописка к промпту.
@@ -230,6 +214,8 @@ module Dn1sup
           # Большие референсы — через ужатые копии (студия режет > 4096px).
           mix_paths = mix.map { |m| Mixins.job_path(m['path'], m['crop'], m['rotation']) }
           mp = Client.mixins_prompt(mix)
+          # Студия klein: workflow всегда auto (поле не шлём), upscale не шлём,
+          # enhance-флаг игнорируется — не шлём. strength действует только в auto.
           items, gw, gh = Client.generate(
             url, key, sketch,
             prompt: s['prompt'], width: w, height: h,
@@ -237,8 +223,6 @@ module Dn1sup
             strength: gen_strength, seed: batch_seeds.first,
             allow_oversized: s['allow_oversized'] == true || s['allow_oversized'].to_s == 'true',
             batch_size: batch, seeds: batch_seeds,
-            enhance_prompt: enhance,
-            upscale: up > 0 ? up : nil, workflow: wf,
             extra_references: mix_paths, mixins_prompt: mp,
             http_id: job.id, geometry_lock: s.fetch('geometry_lock', true)
           )
@@ -297,14 +281,23 @@ module Dn1sup
         end
       end
 
+      # Сиды батча: random=true — каждый случайный (варианты превью
+      # максимально разные), иначе по порядку от seed. Финал всегда
+      # идёт одиночным сидом (random=false) — воспроизводимость.
+      def batch_seed_list(seed, batch, random)
+        n = batch.to_i.clamp(1, 4)
+        return (0...n).map { |i| seed.to_i + i } unless random == true || random.to_s == 'true'
+
+        n.times.map { Random.new_seed % 2_147_483_647 }
+      end
+
       # Мета картинки для сайдкара галереи (описание параметров рядом с файлом).
       def gallery_meta(s, scene, seed, variant, w, h, from_prev)
         { 'scene' => scene, 'seed' => seed, 'variant' => variant,
           'width' => w, 'height' => h, 'prompt' => s['prompt'],
           'strength' => s['strength'], 'steps' => s['steps'],
-          'guidance' => s['guidance'], 'workflow' => s['workflow'],
+          'guidance' => s['guidance'], 'workflow' => 'auto',
           'geometry_lock' => s.fetch('geometry_lock', true),
-          'enhance_prompt' => s['enhance_prompt'], 'upscale' => s['final_upscale'],
           'final_strength' => s['final_strength'], 'from_preview' => from_prev,
           'mixins' => Array(s['mixins']).map { |m| m.is_a?(Hash) ? { 'file' => File.basename((m['path'] || m['file'] || '').to_s), 'caption' => (m['caption'] || '').to_s, 'caption_neg' => (m['caption_neg'] || '').to_s, 'role' => (m['role'] || 'auto').to_s, 'weight' => (m['weight'] || 1.0).to_f, 'apply_to' => (m['apply_to'] || 'both').to_s, 'crop' => Mixins.norm_crop(m['crop'] || m[:crop]), 'rotation' => Mixins.norm_rotation(m['rotation'] || m[:rotation]) } : nil }.compact,
           'model' => [s['unsloth_model'], s['unsloth_gguf']].compact.join('/') }

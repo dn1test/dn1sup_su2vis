@@ -26,21 +26,23 @@
         @click="recheckProject">Проверить снова</button>
       <button class="shrink-0 px-2 py-1 text-slate-500 hover:text-slate-800" @click="projectDismissed = true">Позже</button>
     </div>
-    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[200px_240px_auto_1fr_340px]">
+    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[200px_240px_360px_1fr_340px]">
       <ScenesCol :scenes="scenes" :selected="selected" :thumbs="thumbs" :enabled="useScenes" :sketch="sketchOpts"
         @toggle="toggle" @toggle-enabled="setUseScenes" @update-sketch="setSketch"
         @refresh="loadScenes" @sync-view="syncView" />
-      <MixinsCol :items="mixins" :enabled="useMixins"
+      <MixinsCol :items="mixins" :enabled="useMixins" :settings="settings"
         @add-data="addMixinData" @add-path="addMixinPath" @toggle="toggleMixin"
-        @toggle-enabled="setUseMixins"
+        @toggle-enabled="setUseMixins" @update-settings="updateColumnSettings"
         @caption="captionMixin" @neg="negMixin" @role="roleMixin" @weight="weightMixin"
         @apply="applyMixin" @move="moveMixin" @delete="deleteMixin" @transform="transformMixin" />
       <PreviewCol :job="previewAgg" :results="previews" :busy="busy"
         :can-run="canPreview" :variants="Number(settings.preview_variants || 1)" :selected-seed="Number(settings.seed)"
+        :settings="settings" @update-settings="updateColumnSettings"
         @variants="setVariants" @select-preview="selectPreview"
         @preview="startPreview" @stop="stopCurrent" @final-one="finalOne" @delete="deletePreview" @retry="retryFinal" />
       <FinalCol :job="finalAgg" :results="finals" :busy="busy"
-        :can-run="previews.length > 0" :final-label="finalLabel"
+        :can-run="previews.length > 0" :final-label="finalLabel" :settings="settings"
+        @update-settings="updateColumnSettings"
         @final-all="finalAll" @stop="stopCurrent" @view="viewFinal" @delete="deleteFinal" @retry="retryFinal" />
       <SettingsCol v-model="settings" :status="studioStatus" :log="jobLog" :enhance-preview="enhancePreview"
         @save="saveSettings" @load-log="loadLog" @clear-log="clearLog" @enhance-preview="previewEnhance" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
@@ -324,6 +326,12 @@ async function setSketch(patch) {
 
 async function setVariants(n) {
   settings.value.preview_variants = Math.min(4, Math.max(1, Number(n) || 1))
+  await saveSettings()
+}
+
+// Правки из шестерёнок колонок (превью/финал/примеси): слить и сохранить сразу.
+async function updateColumnSettings(patch) {
+  settings.value = { ...settings.value, ...(patch || {}) }
   await saveSettings()
 }
 

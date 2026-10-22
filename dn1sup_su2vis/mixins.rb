@@ -160,11 +160,15 @@ module Dn1sup
         base = "mix_#{Time.now.strftime('%Y%m%d_%H%M%S')}"
         path = unique_path(d.to_s, base, ext)
         File.binwrite(path, raw)
-        meta = normalize_meta({ 'name' => name.to_s[0, 120], 'caption' => '', 'active' => true }, path)
+        # Дефолты новых примесей — из настроек колонки (что брать / где учитывать).
+        meta = normalize_meta({ 'name' => name.to_s[0, 120], 'caption' => '', 'active' => true,
+                                'role' => Settings.get('mixins_default_role'),
+                                'apply_to' => Settings.get('mixins_default_apply') }, path)
         write_sidecar("#{path}.json", path, meta)
         entry = { 'id' => File.basename(path), 'file' => path, 'name' => meta['name'],
-                  'caption' => '', 'caption_neg' => '', 'role' => 'auto', 'weight' => 1.0,
-                  'apply_to' => 'both', 'pos' => meta['pos'] || 0,
+                  'caption' => '', 'caption_neg' => '', 'role' => meta['role'],
+                  'weight' => 1.0,
+                  'apply_to' => meta['apply_to'], 'pos' => meta['pos'] || 0,
                   'crop' => nil, 'rotation' => 0.0,
                   'active' => true, 'mtime' => File.mtime(path).to_f }
         Log.append('mixins_add', 'file' => File.basename(path))

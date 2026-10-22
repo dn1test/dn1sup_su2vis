@@ -141,7 +141,7 @@ module Dn1sup
 
       test 'настройки читаются без записи (read-only)' do
         h = Settings.all
-        %w[prompt seed sketch_preset preview_preset preview_variants final_mode final_w final_h final_upscale final_strength workflow enhance_prompt name_template strength steps unsloth_url version].each do |k|
+        %w[prompt seed sketch_preset preview_preset preview_variants final_mode final_w final_h final_strength workflow name_template strength steps unsloth_url version].each do |k|
           assert(h.key?(k), "нет ключа #{k}")
         end
         assert_equal(VERSION, h['version'])
@@ -299,6 +299,9 @@ module Dn1sup
         assert(content.include?('только по промпту'), 'panel.html без режима только-промпт — устаревшая сборка')
         assert(content.include?('Показать оригинал'), 'panel.html без просмотра оригинала — устаревшая сборка')
         assert(content.include?('type="radio"') || content.include?('su2vis-scene'), 'panel.html без radio выбора одной сцены — устаревшая сборка')
+        assert(content.include?('Для новых примесей'), 'panel.html без дефолтов примесей в 3-й колонке — устаревшая сборка')
+        assert(content.include?('360px'), 'panel.html без фиксированной ширины превью 360px — устаревшая сборка')
+        assert(content.include?('Случайные сиды'), 'panel.html без тумблера случайных сидов — устаревшая сборка')
         assert(!content.include?('select-all'), 'panel.html с кнопкой Все — устаревшая сборка')
         assert(content.bytesize > 50_000, 'panel.html подозрительно мал — бандл не встроен')
       end
@@ -361,7 +364,7 @@ module Dn1sup
         assert_equal(1.0, Client.norm_strength(1.0))
       end
 
-      test 'client: workflow auto не шлётся (студия 422: только edit/reference/outpaint)' do
+      test 'client: workflow в generate не шлётся (klein: только auto)' do
         assert(Client.normalize_workflow('auto').nil?, 'auto должен стать nil')
         assert(Client.normalize_workflow('').nil?, 'пусто должен стать nil')
         assert(Client.normalize_workflow(nil).nil?, 'nil должен остаться nil')
@@ -396,9 +399,9 @@ module Dn1sup
         assert_equal('flux-3-image-klein-Q6_K.gguf', Settings.coerce('unsloth_gguf', 'flux-3-image-klein-Q6_K.gguf'))
         assert_equal(4, Settings.coerce('steps', 50))
         assert_equal(1.0, Settings.coerce('guidance', 7.0))
-        assert_equal('edit', Settings.coerce('workflow', 'manual'))
-        assert_equal('edit', Settings.coerce('workflow', 'EDIT'))
-        assert_equal('reference', Settings.coerce('workflow', 'reference'))
+        assert_equal('auto', Settings.coerce('workflow', 'manual'))
+        assert_equal('auto', Settings.coerce('workflow', 'EDIT'))
+        assert_equal('auto', Settings.coerce('workflow', 'reference'))
         assert_equal('auto', Settings.coerce('workflow', 'auto'))
         assert_equal('balanced', Settings.coerce('memory_mode', 'low_vram'))
       end
@@ -1011,7 +1014,7 @@ module Dn1sup
         assert_equal(Client::GEOMETRY_LOCK_TEXT, Client.apply_geometry_lock('', true), 'пустой промпт — один замок')
       end
 
-      test 'точность линий: generate шлёт замок + workflow edit' do
+      test 'точность линий: auto шлёт strength, reference без strength, edit запрещён' do
         bodies = []
         fake = Object.new
         fake.define_singleton_method(:request) do |req|
@@ -1024,21 +1027,82 @@ module Dn1sup
           Dir.mktmpdir do |d|
             sk = File.join(d, 'sk.png')
             File.binwrite(sk, "\x89PNG\r\n\x1A\n".b + 'x' * 16)
+            gen = lambda do |**kw|
+              begin
+                Client.generate('http://127.0.0.1:9', 'k', sk, prompt: 'kitchen', width: 256, height: 256, **kw)
+              rescue RuntimeError => e
+                raise unless e.message == 'стоп-тест'
+              end
+            end
+            gen.call(geometry_lock: true, strength: 0.4)
+            gen.call(workflow: 'reference', geometry_lock: true, strength: 0.4)
             begin
-              Client.generate('http://127.0.0.1:9', 'k', sk, prompt: 'kitchen', width: 256, height: 256,
-                              workflow: 'edit', geometry_lock: true, strength: 0.4)
-              assert(false, 'generate должен был дойти до HTTP')
-            rescue RuntimeError => e
-              raise unless e.message == 'стоп-тест'
+              gen.call(workflow: 'edit')
+              assert(false, 'edit должен упасть до HTTP')
+            rescue ArgumentError => e
+              assert(e.message.include?('klein'), "не то сообщение: #{e.message}")
             end
           end
         ensure
           Client.define_singleton_method(:api, orig_api)
         end
-        b = bodies.first
-        assert_equal('edit', b['workflow'], "workflow потерян: #{b.inspect}")
-        assert(b['prompt'].include?(Client::GEOMETRY_LOCK_TEXT), 'замок не ушёл в студию')
-        assert_equal(0.4, b['strength'], 'strength не ушёл в студию')
+        auto, ref = bodies
+        assert(!auto.key?('workflow'), "auto шлёт workflow: #{auto.inspect}")
+        assert_equal(0.4, auto['strength'], 'strength не ушёл в студию в auto')
+        assert(auto['prompt'].include?(Client::GEOMETRY_LOCK_TEXT), 'замок не ушёл в студию')
+        assert_equal('reference', ref['workflow'], "workflow потерян: #{ref.inspect}")
+        assert(!ref.key?('strength'), "reference со strength — студия 400: #{ref.inspect}")
+      end
+
+      test 'примеси: дефолты новых карточек из настроек колонки' do
+        assert_equal('auto', Settings::DEFAULTS['mixins_default_role'], 'дефолт роли')
+        assert_equal('both', Settings::DEFAULTS['mixins_default_apply'], 'дефолт учёта')
+        assert(Settings::PROJECT_KEYS.include?('mixins_default_role'), 'mixins_default_role должен быть per-file')
+        assert(Settings::PROJECT_KEYS.include?('mixins_default_apply'), 'mixins_default_apply должен быть per-file')
+        assert_equal('material', Settings.coerce('mixins_default_role', 'material'))
+        assert_equal('auto', Settings.coerce('mixins_default_role', 'мусор'))
+        assert_equal('preview', Settings.coerce('mixins_default_apply', 'preview'))
+        assert_equal('final', Settings.coerce('mixins_default_apply', 'FINAL'))
+        assert_equal('both', Settings.coerce('mixins_default_apply', 'мусор'))
+      end
+
+      test 'примеси: save_bytes подставляет дефолты роли и учёта' do
+        old_role = Settings.get('mixins_default_role')
+        old_apply = Settings.get('mixins_default_apply')
+        begin
+          Settings.save({ 'mixins_default_role' => 'material', 'mixins_default_apply' => 'preview' })
+          Dir.mktmpdir do |d|
+            out = File.join(d, 'out')
+            raw = "\x89PNG\r\n\x1A\n".b + 'x' * 16
+            require 'base64'
+            url = "data:image/png;base64,#{Base64.strict_encode64(raw)}"
+            e = Mixins.add_data(url, 'тест.png', out)
+            assert_equal('material', e['role'], 'роль не из настроек колонки')
+            assert_equal('preview', e['apply_to'], 'учёт не из настроек колонки')
+            list = Mixins.list(out)
+            assert_equal(1, list.size, "список: #{list.inspect}")
+            assert_equal('material', list.first['role'], 'роль не в списке')
+            assert_equal('preview', list.first['apply_to'], 'учёт не в списке')
+          end
+        ensure
+          Settings.save({ 'mixins_default_role' => old_role, 'mixins_default_apply' => old_apply })
+        end
+      end
+
+      test 'превью: случайные сиды батча, не по порядку' do
+        assert_equal(true, Settings::DEFAULTS['preview_random_seeds'], 'дефолт — случайные')
+        assert(Settings::PROJECT_KEYS.include?('preview_random_seeds'), 'preview_random_seeds должен быть per-file')
+        assert_equal(false, Settings.coerce('preview_random_seeds', false))
+        assert_equal(true, Settings.coerce('preview_random_seeds', 'true'))
+        assert_equal([7, 8, 9], Jobs.batch_seed_list(7, 3, false), 'выкл — по порядку')
+        assert_equal([7, 8, 9], Jobs.batch_seed_list(7, 3, nil), 'nil — по порядку')
+        assert_equal([5], Jobs.batch_seed_list(5, 1, false), 'одиночный выкл — базовый сид')
+        one = Jobs.batch_seed_list(5, 1, true)
+        assert_equal(1, one.size, 'одиночный батч')
+        assert(one.first.is_a?(Integer) && one.first >= 0 && one.first < 2_147_483_647, "сид вне диапазона: #{one.inspect}")
+        rnd = Jobs.batch_seed_list(7, 4, true)
+        assert_equal(4, rnd.size, 'батч из 4')
+        assert(rnd.all? { |s| s.is_a?(Integer) && s >= 0 && s < 2_147_483_647 }, "сиды вне диапазона: #{rnd.inspect}")
       end
 
       test 'панель: enhance опрашивается (enhance_poll в сборке)' do

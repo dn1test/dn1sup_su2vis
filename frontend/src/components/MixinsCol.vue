@@ -8,7 +8,35 @@
           вкл
         </label>
       </span>
-      <span class="text-xs text-slate-500">{{ activeCount }}/{{ items.length }}</span>
+      <span class="flex items-center gap-2">
+        <span class="text-xs text-slate-500">{{ activeCount }}/{{ items.length }}</span>
+        <button class="px-1.5 py-0.5 text-xs border rounded hover:bg-slate-100" :class="showSettings ? 'bg-slate-200' : ''"
+          title="Настройки примесей: дефолты новых карточек" @click="showSettings = !showSettings">⚙</button>
+      </span>
+    </div>
+    <div v-if="showSettings" class="shrink-0 p-3 space-y-2 border-b bg-slate-50/50" :class="!enabled ? 'opacity-50 pointer-events-none' : ''">
+      <div class="text-xs font-medium">Для новых примесей</div>
+      <div class="text-xs text-slate-500">Подставляется в каждую новую карточку, старые не трогает.</div>
+      <label class="block">
+        <span class="text-xs text-slate-500">Что брать</span>
+        <select :value="settings.mixins_default_role || 'auto'" @change="upd('mixins_default_role', $event.target.value)"
+          class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+          <option value="auto">авто — всё</option>
+          <option value="style">стиль/настроение</option>
+          <option value="material">материал/фактура</option>
+          <option value="light">свет/цвет</option>
+          <option value="object">объект/деталь</option>
+        </select>
+      </label>
+      <label class="block">
+        <span class="text-xs text-slate-500">Где учитывать</span>
+        <select :value="settings.mixins_default_apply || 'both'" @change="upd('mixins_default_apply', $event.target.value)"
+          class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+          <option value="both">превью+финал</option>
+          <option value="preview">только превью</option>
+          <option value="final">только финал</option>
+        </select>
+      </label>
     </div>
     <div class="shrink-0 p-3 pb-0 space-y-2" :class="!enabled ? 'opacity-50 pointer-events-none' : ''">
       <div class="flex gap-2">
@@ -91,8 +119,13 @@
 import { computed, ref } from 'vue'
 import MixinCropEditor from './MixinCropEditor.vue'
 import MixinThumb from './MixinThumb.vue'
-const props = defineProps({ items: { type: Array, default: () => [] }, enabled: { type: Boolean, default: true } })
-const emit = defineEmits(['add-data', 'add-path', 'toggle', 'caption', 'neg', 'role', 'weight', 'apply', 'move', 'delete', 'transform', 'toggle-enabled'])
+const showSettings = ref(false)
+const props = defineProps({ items: { type: Array, default: () => [] }, enabled: { type: Boolean, default: true },
+  settings: { type: Object, default: () => ({}) } })
+const emit = defineEmits(['add-data', 'add-path', 'toggle', 'caption', 'neg', 'role', 'weight', 'apply', 'move', 'delete', 'transform', 'toggle-enabled', 'update-settings'])
+function upd(key, value) {
+  emit('update-settings', { [key]: value })
+}
 const editing = ref(null)
 const showOrig = ref({})
 function hasTransform(m) {

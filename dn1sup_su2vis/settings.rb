@@ -37,10 +37,8 @@ module Dn1sup
         'final_mode' => 'sketch',
         'final_w' => 2048,
         'final_h' => 1536,
-        'final_upscale' => 0.0,
-        'workflow' => 'edit',
+        'workflow' => 'auto',
         'geometry_lock' => true,
-        'enhance_prompt' => true,
         'name_template' => '{scene}{suffix}_{date}',
         'strength' => 1.0,
         'steps' => 4,
@@ -49,6 +47,9 @@ module Dn1sup
         'allow_oversized' => true,
         'use_scenes' => true,
         'use_mixins' => true,
+        'mixins_default_role' => 'auto',
+        'mixins_default_apply' => 'both',
+        'preview_random_seeds' => true,
         'suffix' => '_photorealistic',
         'ext' => 'jpg',
         'unsloth_url' => 'http://127.0.0.1:8888',
@@ -274,19 +275,25 @@ module Dn1sup
         when 'unsloth_gguf' then value.to_s.empty? ? KLEIN_GGUF : value.to_s
         when 'steps' then 4
         when 'guidance' then 1.0
-        when 'workflow'
-          s = value.to_s.strip.downcase
-          %w[auto edit reference].include?(s) ? s : 'edit'
         when 'memory_mode' then 'balanced'
         when 'seed' then value.to_i
-        when 'seed_locked', 'allow_oversized', 'enhance_prompt', 'use_scenes', 'use_mixins',
+        when 'seed_locked', 'allow_oversized', 'use_scenes', 'use_mixins',
              'sketch_thin_lines', 'sketch_hide_dims', 'sketch_autocrop', 'sketch_white_bg',
-             'unsloth_autostart', 'geometry_lock' then value == true || value.to_s == 'true'
+             'unsloth_autostart', 'geometry_lock', 'preview_random_seeds' then value == true || value.to_s == 'true'
+        # Студия klein принимает только auto (поле не шлём): edit 400,
+        # явный reference 400 со strength. Легаси 'edit' из 0.13.0 мигрирует в auto.
+        when 'workflow' then 'auto'
+        when 'mixins_default_role'
+          s = value.to_s.strip.downcase
+          %w[auto style material light object].include?(s) ? s : 'auto'
+        when 'mixins_default_apply'
+          s = value.to_s.strip.downcase
+          %w[both preview final].include?(s) ? s : 'both'
         when 'unsloth_cmd' then value.to_s.strip.empty? ? 'unsloth' : value.to_s.strip
         when 'sketch_source' then %w[hd view preset].include?(value.to_s) ? value.to_s : 'hd'
         when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1024x768'
         when 'preview_max', 'final_w', 'final_h', 'preview_variants' then value.to_i
-        when 'strength', 'final_upscale', 'final_strength' then value.to_f
+        when 'strength', 'final_strength' then value.to_f
         else value.to_s
         end
       end

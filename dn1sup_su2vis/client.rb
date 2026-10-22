@@ -411,19 +411,24 @@ module Dn1sup
 
       # Генерация только на klein (distilled: строго 4 шага / 1.0).
       # steps/guidance игнорируются из настроек (фиксированы).
-      # geometry_lock: true — дописать замок линий к промпту (точнее держит эскиз).
-      # workflow: 'edit' — точнее держит геометрию, 'reference' — свободнее,
-      # 'auto'/nil — решает студия. strength: ниже = точнее линии (0.3-0.5),
-      # выше = свободнее (0.8-1.0).
+      # geometry_lock: true — дописать замок линий к промпту (доказанно меняет результат).
+      # workflow: студия klein принимает только auto (поле не шлём) — edit 400
+      # всегда, явный reference 400 в паре со strength. strength шлётся только
+      # в auto (доказанно действует на нижнем конце: 0.05 — калька;
+      # 0.6 и 1.0 попиксельно одинаковы). enhance_prompt/upscale студия klein
+      # игнорирует/режет 400 — не шлём вообще.
       # Возвращает [items, w, h], где items — массив [bytes, meta].
       def generate(url, key, sketch_path, prompt:, width:, height:, steps: 4, guidance: 1.0,
                    strength: 1.0, seed: nil, allow_oversized: true, batch_size: 1,
-                   seeds: nil, enhance_prompt: nil, upscale: nil, workflow: nil,
+                   seeds: nil, workflow: nil,
                    extra_references: nil, mixins_prompt: nil, http_id: nil,
                    geometry_lock: true)
         steps = KLEIN_STEPS
         guidance = KLEIN_GUIDANCE
         workflow = normalize_workflow(workflow)
+        if workflow == 'edit'
+          raise ArgumentError, "workflow 'edit' не поддерживается семейством klein (студия отвечает 400) — используйте auto"
+        end
         data_url = nil
         sketch_ok = !sketch_path.to_s.empty? && File.file?(sketch_path.to_s)
         if sketch_ok
@@ -450,13 +455,12 @@ module Dn1sup
             reference_images: refs
           }
           body[:init_image] = data_url unless data_url.nil?
-          body[:strength] = norm_strength(strength) unless data_url.nil?
+          # strength — только в auto: явный workflow со strength студия режет 400.
+          body[:strength] = norm_strength(strength) if !data_url.nil? && workflow.nil?
           body[:seed] = payload_seed unless payload_seed.nil?
           batch = batch_size.to_i < 1 ? 1 : batch_size.to_i
           body[:batch_size] = batch if batch > 1
           body[:seeds] = seeds.map(&:to_i) if seeds.is_a?(Array) && !seeds.empty?
-          body[:enhance_prompt] = !!enhance_prompt unless enhance_prompt.nil?
-          body[:upscale] = upscale.to_f if upscale && upscale.to_f > 0
           body[:workflow] = workflow.to_s unless workflow.nil? || workflow.to_s.empty?
 
           http = api(url)

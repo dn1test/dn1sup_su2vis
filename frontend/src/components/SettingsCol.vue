@@ -33,43 +33,13 @@
           class="mt-1 w-full border rounded p-2 text-xs"></textarea>
       </label>
       <div class="flex items-center justify-between gap-2">
-        <span class="text-xs font-medium">Enhance prompt</span>
-        <div class="flex items-center gap-2">
-          <button class="px-2 py-1 text-xs border rounded hover:bg-slate-100 disabled:opacity-40"
-            :disabled="enhancePreview && enhancePreview.loading" @click="$emit('enhance-preview')">✨ Preview</button>
-          <label class="relative inline-flex cursor-pointer items-center" title="Улучшить промпт (FLUX-апсемплер)">
-            <input type="checkbox" class="peer sr-only" :checked="modelValue.enhance_prompt" @change="upd('enhance_prompt', $event.target.checked)" />
-            <span class="block h-5 w-9 rounded-full bg-slate-300 transition-colors peer-checked:bg-emerald-500"></span>
-            <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4"></span>
-          </label>
-        </div>
+        <span class="text-xs font-medium">Капшн апсемплера</span>
+        <button class="px-2 py-1 text-xs border rounded hover:bg-slate-100 disabled:opacity-40"
+          :disabled="enhancePreview && enhancePreview.loading" @click="$emit('enhance-preview')">👁 Показать</button>
       </div>
-      <div class="text-xs text-slate-400">Улучшить промпт (FLUX-апсемплер): что реально уйдёт в модель.</div>
-      <div class="border rounded p-2 space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-medium">Точность линий</span>
-        </div>
-        <label class="block">
-          <span class="text-xs text-slate-500">Режим привязки к эскизу</span>
-          <select :value="modelValue.workflow || 'edit'" @change="upd('workflow', $event.target.value)"
-            class="mt-1 w-full border rounded p-1.5 text-xs">
-            <option value="edit">edit — точнее держит геометрию</option>
-            <option value="reference">reference — свободнее, живописнее</option>
-            <option value="auto">auto — решает студия</option>
-          </select>
-        </label>
-        <div class="text-xs text-slate-400">edit шлёт эскиз как правку (линии на месте), reference — как образец (может увести).</div>
-        <label class="block">
-          <span class="flex items-center justify-between text-xs"><span class="font-medium">Свобода модели (превью)</span><span>{{ modelValue.strength }}</span></span>
-          <input type="range" min="0.05" max="1" step="0.05" :value="modelValue.strength"
-            @input="upd('strength', +$event.target.value)" class="w-full accent-slate-900" />
-        </label>
-        <div class="text-xs text-slate-400">Ниже = точнее линии (0.3–0.5 калька, 0.6–0.8 баланс, 1.0 почти с нуля).</div>
-        <label class="flex items-start gap-2">
-          <input type="checkbox" class="mt-0.5" :checked="modelValue.geometry_lock !== false" @change="upd('geometry_lock', $event.target.checked)" />
-          <span class="text-xs"><span class="font-medium">Замок геометрии</span><br />
-          <span class="text-slate-400">Дописывает запрет двигать стены/окна/двери и менять камеру. Выкл — только если модель «прилипает» и не даёт красоты.</span></span>
-        </label>
+      <div class="text-xs text-slate-400">Студия сама улучшает промпт апсемплером — как она видит эскиз. Подсмотри и учти в промпте вручную.</div>
+      <div class="border rounded p-2 text-xs bg-slate-50 text-slate-600">
+        Точность линий — под ⚙ во 2-й колонке, размер и доработка финала — под ⚙ в 4-й, дефолты примесей — под ⚙ в 3-й.
       </div>
       <div class="border rounded p-2 space-y-2">
         <div class="flex items-center justify-between">
@@ -93,52 +63,9 @@
         </label>
       </div>
       <div class="space-y-2">
-        <div class="text-xs font-medium">Финальный размер</div>
-        <label class="block">
-          <span class="text-xs text-slate-500">Aspect ratio</span>
-          <div class="mt-1 flex gap-1">
-            <select :value="aspectVal" @change="setAspect($event.target.value)"
-              class="flex-1 min-w-0 border rounded p-1.5 text-xs">
-              <option value="sketch">Размер эскиза</option>
-              <option value="1:1">Square (1:1)</option>
-              <option value="4:3">Landscape (4:3)</option>
-              <option value="3:4">Portrait (3:4)</option>
-              <option value="16:9">Wide (16:9)</option>
-              <option v-if="aspectVal === '__custom'" value="__custom" disabled>Свой размер…</option>
-            </select>
-            <button class="shrink-0 px-2 py-1 text-xs border rounded hover:bg-slate-100"
-              title="Поменять ширину и высоту местами" @click="swapWH">⇄</button>
-          </div>
-        </label>
-        <div>
-          <span class="text-xs text-slate-500">Resolution</span>
-          <div class="mt-1 grid grid-cols-2 gap-2">
-            <select :value="Number(modelValue.final_w)" @change="updWH('final_w', +$event.target.value)"
-              class="w-full border rounded p-1.5 text-xs">
-              <option v-for="px in RES_OPTIONS" :key="'w' + px" :value="px">↔ {{ px }}</option>
-            </select>
-            <select :value="Number(modelValue.final_h)" @change="updWH('final_h', +$event.target.value)"
-              class="w-full border rounded p-1.5 text-xs">
-              <option v-for="px in RES_OPTIONS" :key="'h' + px" :value="px">↕ {{ px }}</option>
-            </select>
-          </div>
-        </div>
-        <label class="block">
-          <span class="flex items-center justify-between text-xs"><span class="font-medium">Доработка финала</span><span>{{ modelValue.final_strength }}</span></span>
-          <input type="range" min="0.05" max="1" step="0.05" :value="modelValue.final_strength"
-            @input="upd('final_strength', +$event.target.value)" class="w-full accent-slate-900" />
-        </label>
-        <div class="text-xs text-slate-400">Сила доделки превью в финал: 0.2–0.35 держит линии, 0.5+ меняет геометрию.</div>
-      </div>
-      <div class="space-y-2">
         <div class="text-xs border rounded p-2 bg-slate-50 text-slate-600">
           Модель klein distilled: steps 4 · guidance 1.0 (фиксировано)
         </div>
-        <label class="block">
-          <span class="flex items-center justify-between text-xs"><span class="font-medium">Batch size</span><span>{{ modelValue.preview_variants }}</span></span>
-          <input type="range" min="1" max="4" step="1" :value="Number(modelValue.preview_variants) || 1"
-            @input="upd('preview_variants', +$event.target.value)" class="w-full accent-slate-900" />
-        </label>
       </div>
       <details class="border rounded">
         <summary class="px-2 py-1 cursor-pointer text-xs text-slate-600">⚙ Advanced</summary>
@@ -180,11 +107,6 @@
           </select>
         </label>
       </div>
-      <label class="block">
-        <span class="text-xs text-slate-500">Strength превью (дубль блока «Точность линий»): {{ modelValue.strength }}</span>
-        <input type="range" min="0.05" max="1" step="0.05" :value="modelValue.strength"
-          @input="upd('strength', +$event.target.value)" class="w-full" />
-      </label>
       <div class="grid grid-cols-2 gap-2">
         <div class="block">
           <span class="text-xs text-slate-500">Память (klein: balanced)</span>
@@ -194,21 +116,6 @@
           <input type="checkbox" :checked="modelValue.allow_oversized" @change="upd('allow_oversized', $event.target.checked)" />
           <span class="text-xs">Allow oversized</span>
         </label>
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        <label class="block">
-          <span class="text-xs text-slate-500">Hires-fix финала</span>
-          <select :value="String(modelValue.final_upscale)" @change="upd('final_upscale', +$event.target.value)"
-            class="mt-1 w-full border rounded p-1.5 text-xs">
-            <option value="0">выкл</option>
-            <option value="1.5">1.5×</option>
-            <option value="2">2×</option>
-          </select>
-        </label>
-        <div class="block">
-          <span class="text-xs text-slate-500">Workflow (см. блок «Точность линий»)</span>
-          <div class="mt-1 w-full border rounded p-1.5 text-xs bg-slate-50 text-slate-600">{{ modelValue.workflow || 'edit' }}</div>
-        </div>
       </div>
       <div class="flex gap-2">
         <button class="flex-1 px-3 py-2 rounded bg-slate-900 text-white text-xs hover:bg-slate-700" @click="$emit('save')">Сохранить</button>
@@ -222,39 +129,12 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 const tab = ref('settings')
 const props = defineProps({ modelValue: { type: Object, required: true }, status: { type: Object, default: null }, log: { type: Array, default: () => [] }, enhancePreview: { type: Object, default: null } })
 const emit = defineEmits(['update:modelValue', 'save', 'check', 'load-log', 'clear-log', 'enhance-preview', 'select-out-dir', 'open-out-dir'])
-const RES_OPTIONS = [512, 768, 1024, 1280, 1536, 2048]
-const ASPECT_SIZES = { '1:1': [1024, 1024], '4:3': [1280, 960], '3:4': [960, 1280], '16:9': [1536, 864] }
-// Текущий аспект из final_w/final_h; 1k/2k и прочие режимы — «Свой размер…».
-const aspectVal = computed(() => {
-  if (props.modelValue.final_mode !== 'custom') {
-    return props.modelValue.final_mode === 'sketch' ? 'sketch' : '__custom'
-  }
-  const w = Number(props.modelValue.final_w)
-  const h = Number(props.modelValue.final_h)
-  for (const [k, [aw, ah]] of Object.entries(ASPECT_SIZES)) {
-    if (w === aw && h === ah) return k
-  }
-  return '__custom'
-})
 function upd(key, value) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
-}
-function setAspect(v) {
-  if (v === '__custom') return
-  if (v === 'sketch') { upd('final_mode', 'sketch'); return }
-  const [w, h] = ASPECT_SIZES[v]
-  emit('update:modelValue', { ...props.modelValue, final_mode: 'custom', final_w: w, final_h: h })
-}
-function updWH(key, v) {
-  emit('update:modelValue', { ...props.modelValue, final_mode: 'custom', [key]: v })
-}
-function swapWH() {
-  emit('update:modelValue', { ...props.modelValue, final_mode: 'custom',
-    final_w: props.modelValue.final_h, final_h: props.modelValue.final_w })
 }
 // Пустое поле = случайно (-1), как «Random if empty» в студии.
 function updSeed(v) {
