@@ -68,7 +68,11 @@ module Dn1sup
         job.status = 'running'
         t_job = Time.now
         s = job.params['settings'] || {}
-        scenes = Array(job.params['scenes']).map(&:to_i)
+        # Колонка «Сцены» выключена: сцен нет — один проход без эскиза
+        # (только промпт / только примеси). Размер — из общих настроек.
+        raw_scenes = Array(job.params['scenes']).reject { |v| v.nil? || v.to_s.empty? }
+        no_sketch = raw_scenes.empty?
+        scenes = no_sketch ? [nil] : raw_scenes.map(&:to_i)
         url = s['unsloth_url'].to_s
         key = s['unsloth_key'].to_s
         raise 'нет ключа Unsloth Studio (вкладка Настройки)' if key.empty?
@@ -92,14 +96,25 @@ module Dn1sup
             raise "студия недоступна (#{url}) — проверь, что `unsloth studio` запущена, и повтори"
           end
           job.progress = { done: n, total: scenes.size, scene: idx }
-          sketch = (job.params['sketches'] || {})[idx.to_s] || (job.params['sketches'] || {})[idx]
-          sketch = Scenes.capture(idx) if sketch.to_s.empty? || !File.file?(sketch.to_s)
-          sketch = sketch.to_s
+          sketch =
+            if idx.nil?
+              # Без сцены: превью финала лежит под ключом 'prompt' (см. фронт
+              # savePreviewRefs), иначе — чистый text-to-image без эскиза.
+              sk = job.params['sketches'] || {}
+              cand = sk['prompt'] || sk[:prompt] || sk['null'] || sk.values.first
+              cand = cand.to_s if cand && File.file?(cand.to_s)
+              (cand && File.file?(cand.to_s)) ? cand.to_s : nil
+            else
+              cap = (job.params['sketches'] || {})[idx.to_s] || (job.params['sketches'] || {})[idx]
+              cap = Scenes.capture(idx) if cap.to_s.empty? || !File.file?(cap.to_s)
+              cap.to_s
+            end
           # Финал идёт из байтов превью (from_preview): тот же сюжет seed'ом
           # не воспроизводится — студия недетерминирована. Сила доработки —
           # final_strength (по умолчанию 0.4), размер — обратно до HD.
           from_prev = job.kind == 'final' && (s['from_preview'] == true || s['from_preview'].to_s == 'true')
-          w0, h0 = Scenes.dims(sketch) || [1024, 1024]
+          # Без эскиза пропорций нет — берём из общих настроек финала.
+          w0, h0 = sketch ? (Scenes.dims(sketch) || [1024, 1024]) : default_dims(s)
           # Целевая длинная сторона финала из превью: маленький референс
           # тянем ВВЕРХ (fit_size умеет только уменьшать — 1K/2K иначе
           # залипали бы на размере превью).
@@ -116,7 +131,7 @@ module Dn1sup
             else
               final_size(s, w0, h0)
             end
-          seed = (seeds[idx.to_s] || seeds[idx] || seed_base + idx).to_i
+          seed = (seeds[idx.to_s] || seeds[idx] || seeds['prompt'] || seeds['null'] || seed_base + idx.to_i).to_i
           batch = job.kind == 'preview' ? s['preview_variants'].to_i.clamp(1, 4) : 1
           batch_seeds = batch.times.map { |i| seed + i }
           wf = s['workflow'].to_s
@@ -125,9 +140,10 @@ module Dn1sup
           t_gen = Time.now
           gen_strength = job.kind == 'final' && from_prev ? s.fetch('final_strength', s['strength']).to_f : s['strength'].to_f
           # Примеси: активные референсы + подписи -> дописка к промпту.
-          # Превью и финал учитывают их одинаково.
-          mix = Mixins.active_for_job(job.params['mixins'] || s['mixins'])
-          mix_paths = mix.map { |m| m['path'] }
+          # Превью и финал учитывают их одинаково; apply_to режет по стадии.
+          mix = Mixins.active_for_job(job.params['mixins'] || s['mixins'], job.kind)
+          # Большие референсы — через ужатые копии (студия режет > 4096px).
+          mix_paths = mix.map { |m| Mixins.job_path(m['path'], m['crop'], m['rotation']) }
           mp = Client.mixins_prompt(mix)
           items, gw, gh = Client.generate(
             url, key, sketch,
@@ -189,7 +205,7 @@ module Dn1sup
           'guidance' => s['guidance'], 'workflow' => s['workflow'],
           'enhance_prompt' => s['enhance_prompt'], 'upscale' => s['final_upscale'],
           'final_strength' => s['final_strength'], 'from_preview' => from_prev,
-          'mixins' => Array(s['mixins']).map { |m| m.is_a?(Hash) ? { 'file' => File.basename((m['path'] || m['file'] || '').to_s), 'caption' => (m['caption'] || '').to_s } : nil }.compact,
+          'mixins' => Array(s['mixins']).map { |m| m.is_a?(Hash) ? { 'file' => File.basename((m['path'] || m['file'] || '').to_s), 'caption' => (m['caption'] || '').to_s, 'caption_neg' => (m['caption_neg'] || '').to_s, 'role' => (m['role'] || 'auto').to_s, 'weight' => (m['weight'] || 1.0).to_f, 'apply_to' => (m['apply_to'] || 'both').to_s, 'crop' => Mixins.norm_crop(m['crop'] || m[:crop]), 'rotation' => Mixins.norm_rotation(m['rotation'] || m[:rotation]) } : nil }.compact,
           'model' => [s['unsloth_model'], s['unsloth_gguf']].compact.join('/') }
       end
 
@@ -221,6 +237,14 @@ module Dn1sup
         end
       end
 
+      # Пропорции без эскиза (сцены выключены): из общих настроек финала
+      # (final_w x final_h). Мусор — квадрат 1024.
+      def default_dims(s)
+        cw = s['final_w'].to_i
+        ch = s['final_h'].to_i
+        (cw > 0 && ch > 0) ? Client.fit_size(cw, ch) : [1024, 1024]
+      end
+
       # Шаблон имени: {scene} {seed} {date} {suffix}
       def expand_name(s, idx, seed)
         t = (s['name_template'] || '{scene}{suffix}_{date}').to_s
@@ -231,6 +255,7 @@ module Dn1sup
       end
 
       def safe_name(idx)
+        return 'prompt' if idx.nil?
         model = Sketchup.active_model
         name = model&.pages&.[](idx)&.name || "scene_#{idx}"
         name.gsub(/[^\p{L}\p{N}\-]+/u, '_')[0, 60]

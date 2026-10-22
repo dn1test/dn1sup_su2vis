@@ -40,6 +40,8 @@ module Dn1sup
         'guidance' => 1.0,
         'memory_mode' => 'balanced',
         'allow_oversized' => true,
+        'use_scenes' => true,
+        'use_mixins' => true,
         'suffix' => '_photorealistic',
         'ext' => 'jpg',
         'unsloth_url' => 'http://127.0.0.1:8888',
@@ -245,7 +247,7 @@ module Dn1sup
       def coerce(key, value)
         case key
         when 'seed' then value.to_i
-        when 'seed_locked', 'allow_oversized', 'enhance_prompt' then value == true || value.to_s == 'true'
+        when 'seed_locked', 'allow_oversized', 'enhance_prompt', 'use_scenes', 'use_mixins' then value == true || value.to_s == 'true'
         when 'preview_max', 'steps', 'final_w', 'final_h', 'preview_variants' then value.to_i
         when 'strength', 'guidance', 'final_upscale', 'final_strength' then value.to_f
         else value.to_s

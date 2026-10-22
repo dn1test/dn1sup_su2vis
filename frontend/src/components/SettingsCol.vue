@@ -200,25 +200,10 @@
           </select>
         </label>
       </div>
-      <details class="border rounded">
-        <summary class="px-2 py-1 cursor-pointer text-xs text-slate-600">Подключение к студии</summary>
-        <div class="p-2 space-y-2">
-          <label class="block">
-            <span class="text-xs text-slate-500">URL студии</span>
-            <input :value="modelValue.unsloth_url" @input="upd('unsloth_url', $event.target.value)"
-              class="mt-1 w-full border rounded p-1.5 text-xs" />
-          </label>
-          <label class="block">
-            <span class="text-xs text-slate-500">API ключ</span>
-            <input type="password" :value="modelValue.unsloth_key" @input="upd('unsloth_key', $event.target.value)"
-              class="mt-1 w-full border rounded p-1.5 text-xs" />
-          </label>
-        </div>
-      </details>
       <div class="flex gap-2">
         <button class="flex-1 px-3 py-2 rounded bg-slate-900 text-white text-xs hover:bg-slate-700" @click="$emit('save')">Сохранить</button>
-        <button class="flex-1 px-3 py-2 rounded border text-xs hover:bg-slate-50" @click="$emit('check')">Проверить студию</button>
       </div>
+      <div class="text-xs text-slate-400">Подключение (URL, ключ, модель) — кнопка «Подключение» в шапке.</div>
       <div v-if="status" class="text-xs" :class="status.ok ? 'text-green-700' : 'text-red-600'">{{ status.text }}</div>
         </div>
       </details>

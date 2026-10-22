@@ -71,12 +71,19 @@ module Dn1sup
         # Только внутри out_dir (иначе — отказ): панель не должна читать
         # произвольные пути. MIME — по содержимому (студия отдаёт PNG,
         # а имя файла может быть .jpg по настройке ext).
+        # Пути нормализуем через expand_path с обеих сторон: out_dir
+        # собирается из пути модели и несёт бэкслэши, а expand_path файла
+        # отдаёт прямые — без этого легальный файл «вне папки».
+        def within_dir?(dir, path)
+          d = File.expand_path(dir.to_s)
+          p = File.expand_path(path.to_s, d)
+          p.start_with?(d + File::SEPARATOR) ? p : nil
+        end
+
         def result_data_url(file)
           dir = Settings.out_dir
-          path = File.expand_path(file.to_s, dir)
-          unless path.start_with?(dir + File::SEPARATOR) && File.file?(path)
-            raise 'файл вне папки результатов или не найден'
-          end
+          path = within_dir?(dir, file)
+          raise 'файл вне папки результатов или не найден' if path.nil? || !File.file?(path)
           mime = Client.sniff_mime(path) ||
                  (File.extname(path).downcase == '.png' ? 'image/png' : 'image/jpeg')
           "data:#{mime};base64,#{Base64.strict_encode64(File.binread(path))}"
@@ -187,8 +194,19 @@ module Dn1sup
           dlg.add_action_callback('mixins_update') do |_ctx, req_id, params|
             data = parse_payload(params)
             begin
-              entry = Mixins.update(data['id'].to_s, caption: data['caption'], active: data['active'])
+              entry = Mixins.update(data['id'].to_s, caption: data['caption'], active: data['active'], crop: data['crop'], rotation: data['rotation'],
+                                    role: data['role'], caption_neg: data['caption_neg'],
+                                    weight: data['weight'], apply_to: data['apply_to'], pos: data['pos'])
               push_event('result', id: req_id, payload: { ok: true, entry: entry })
+            rescue StandardError => e
+              push_event('result', id: req_id, payload: { ok: false, error: e.message })
+            end
+          end
+          dlg.add_action_callback('mixins_reorder') do |_ctx, req_id, params|
+            data = parse_payload(params)
+            begin
+              ids = data['ids'] || data['order'] || []
+              push_event('result', id: req_id, payload: Mixins.reorder(Array(ids)))
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end
@@ -218,8 +236,8 @@ module Dn1sup
           end
           dlg.add_action_callback('jobs_start') do |_ctx, req_id, params|
             data = parse_payload(params)
-            job = Jobs.enqueue(data['kind'] || 'preview',
-                               Array(data['scenes']).map(&:to_i),
+            scenes = Array(data['scenes']).reject { |v| v.nil? || v.to_s.empty? }.map(&:to_i)
+            job = Jobs.enqueue(data['kind'] || 'preview', scenes,
                                (data['settings'] || {}).merge('out_dir' => Settings.out_dir))
             job_obj = Jobs.find(job[:id])
             job_obj.params['sketches'] = data['sketches'] if data['sketches'].is_a?(Hash)
@@ -276,7 +294,7 @@ module Dn1sup
             data = parse_payload(params)
             begin
               s = Settings.all
-              raise 'нет ключа Unsloth Studio (вкладка Настройки)' if s['unsloth_key'].to_s.empty?
+              raise 'нет ключа Unsloth Studio (окно Подключение в шапке)' if s['unsloth_key'].to_s.empty?
               ep = Client.enhance_preview(s['unsloth_url'], s['unsloth_key'],
                                           data['prompt'] || s['prompt'], data['reference'])
               push_event('result', id: req_id, payload: { ok: true, enhanced_prompt: ep })
@@ -313,6 +331,45 @@ module Dn1sup
             begin
               st = Client.status(s['unsloth_url'].to_s, s['unsloth_key'].to_s)
               push_event('result', id: req_id, payload: { ok: true, status: st })
+            rescue StandardError => e
+              push_event('result', id: req_id, payload: { ok: false, error: e.message })
+            end
+          end
+          # Модели студии для окна «Подключение»: текущий статус image-пайплайна
+          # (там же возможности: family, workflows, supports_*, conditioning)
+          # + только модели генерации картинок из GET /v1/models (task ~ image).
+          # LLM, аудио и pup-апсемплер в список не попадают.
+          dlg.add_action_callback('studio_models') do |_ctx, req_id, params|
+            data = parse_payload(params)
+            s = data['settings'] || Settings.all
+            begin
+              url = s['unsloth_url'].to_s
+              key = s['unsloth_key'].to_s
+              raise 'нет ключа Unsloth Studio (окно Подключение в шапке)' if key.empty?
+              models = Client.image_models(url, key)
+              begin
+                st = Client.status(url, key)
+              rescue StandardError
+                st = nil
+              end
+              begin
+                studio_defaults = Client.generation_preset(url, key)
+              rescue StandardError
+                studio_defaults = nil
+              end
+              models = models.map do |m|
+                file = ''
+                begin
+                  file = Client.resolve_gguf_filename(url, key, m['id'], m['quant'])
+                rescue StandardError
+                  file = ''
+                end
+                m.merge('gguf_file' => file,
+                        'preset' => Client.preset_for(m['id'], studio_defaults))
+              end
+              push_event('result', id: req_id,
+                         payload: { ok: true, models: models, status: st,
+                                    studio_defaults: studio_defaults })
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end

@@ -17,6 +17,14 @@ module Dn1sup
 
       IMAGE_EXTS = %w[.png .jpg .jpeg .webp].freeze
       DIRNAME = 'mixins'.freeze
+      ROLES = %w[auto style material light object].freeze
+      APPLY_TO = %w[both preview final].freeze
+      # Нормальный размер примеси: референсы уходят в студию base64 в JSON,
+      # большие фото раздувают запрос и VRAM. Длинная сторона — 1024,
+      # файл — до 4 МБ. Фронт жмёт на canvas до отправки (см. MixinsCol),
+      # здесь — страховка для пути «Из файла» и прямых вызовов.
+      MAX_LONG_SIDE = 1024
+      MAX_BYTES = 4 * 1024 * 1024
 
       # Папка примесей: в проекте — su2vis/mixins, иначе — <out_dir>/mixins.
       # dir = :auto — по активной модели; иначе явный путь проекта/out.
@@ -39,14 +47,18 @@ module Dn1sup
           next if name.end_with?('.json')
           img = File.join(d, name)
           next unless File.file?(img)
-          meta = read_sidecar("#{img}.json")
+          meta = normalize_meta(read_sidecar("#{img}.json"), img)
           entries << {
             'id' => name, 'file' => img, 'name' => meta['name'] || name,
-            'caption' => meta['caption'] || '', 'active' => meta.fetch('active', true),
+            'caption' => meta['caption'] || '', 'caption_neg' => meta['caption_neg'] || '',
+            'role' => meta['role'] || 'auto', 'weight' => meta['weight'] || 1.0,
+            'apply_to' => meta['apply_to'] || 'both', 'pos' => meta['pos'] || 0,
+            'crop' => meta['crop'], 'rotation' => meta['rotation'] || 0.0,
+            'active' => meta.fetch('active', true),
             'mtime' => File.mtime(img).to_f
           }
         end
-        entries.sort_by { |e| e['mtime'] || 0 }
+        entries.sort_by { |e| [e['pos'] || 0, e['mtime'] || 0] }
       end
 
       # data_url картинки из <input type=file> панели -> файл + thumb-data_url.
@@ -67,17 +79,28 @@ module Dn1sup
         save_bytes(File.binread(s), File.extname(s).downcase, File.basename(s), dir)
       end
 
-      def update(id, caption: nil, active: nil, dir: :auto)
+      def update(id, caption: nil, active: nil, dir: :auto, role: nil, caption_neg: nil, weight: nil, apply_to: nil, pos: nil, crop: :__unset__, rotation: :__unset__)
         d = File.expand_path(base_dir(dir).to_s)
         img = File.expand_path(File.basename(id.to_s), d)
         raise 'файл вне папки примесей' unless img.start_with?(d + File::SEPARATOR)
         raise 'файл не найден' unless File.file?(img)
-        meta = read_sidecar("#{img}.json")
+        meta = normalize_meta(read_sidecar("#{img}.json"), img)
         meta['caption'] = caption.to_s[0, 500] unless caption.nil?
         meta['active'] = (active == true || active.to_s == 'true') unless active.nil?
+        meta['role'] = norm_role(role) unless role.nil?
+        meta['caption_neg'] = caption_neg.to_s[0, 500] unless caption_neg.nil?
+        meta['weight'] = norm_weight(weight) unless weight.nil?
+        meta['apply_to'] = norm_apply_to(apply_to) unless apply_to.nil?
+        meta['pos'] = pos.to_i unless pos.nil?
+        meta['crop'] = norm_crop(crop) unless crop == :__unset__
+        meta['rotation'] = norm_rotation(rotation) unless rotation == :__unset__
         write_sidecar("#{img}.json", img, meta)
         { 'id' => File.basename(img), 'file' => img, 'name' => meta['name'],
-          'caption' => meta['caption'] || '', 'active' => meta.fetch('active', true) }
+          'caption' => meta['caption'] || '', 'caption_neg' => meta['caption_neg'] || '',
+          'role' => meta['role'] || 'auto', 'weight' => meta['weight'] || 1.0,
+          'apply_to' => meta['apply_to'] || 'both', 'pos' => meta['pos'] || 0,
+          'crop' => meta['crop'], 'rotation' => meta['rotation'] || 0.0,
+          'active' => meta.fetch('active', true) }
       end
 
       def remove(id, dir = :auto)
@@ -92,29 +115,424 @@ module Dn1sup
         { ok: true, id: File.basename(img) }
       end
 
-      # Активные примеси для задачи: [{path, caption}].
-      def active_for_job(items)
+      # Активные примеси для задачи: [{path, caption, caption_neg, role, weight}].
+      # kind: preview/final — отсекает apply_to чужой стадии.
+      def active_for_job(items, kind = nil)
         Array(items).filter_map do |m|
           next unless m.is_a?(Hash)
           p = (m['path'] || m['file'] || '').to_s
           next if p.empty? || !File.file?(p)
           cap = (m['caption'] || '').to_s
           next unless m.fetch('active', true) == true || m.fetch('active', true).to_s == 'true'
-          { 'path' => p, 'caption' => cap }
+          apply = norm_apply_to(m['apply_to'] || m[:apply_to])
+          if kind && apply != 'both' && apply != kind.to_s
+            next
+          end
+          { 'path' => p, 'caption' => cap,
+            'caption_neg' => (m['caption_neg'] || m[:caption_neg]).to_s,
+            'role' => norm_role(m['role'] || m[:role]),
+            'weight' => norm_weight(m['weight'] || m[:weight]),
+            'crop' => norm_crop(m['crop'] || m[:crop]),
+            'rotation' => norm_rotation(m['rotation'] || m[:rotation]) }
         end
       end
 
+      # Порядок карточек: ids сверху вниз. Пишем pos в сайдкары.
+      def reorder(ids, dir = :auto)
+        list = Array(ids).map(&:to_s).reject(&:empty?)
+        raise 'пустой порядок' if list.empty?
+        d = base_dir(dir)
+        list.each_with_index do |id, i|
+          img = File.expand_path(File.basename(id), d.to_s)
+          raise 'файл вне папки примесей' unless img.start_with?(File.expand_path(d.to_s) + File::SEPARATOR)
+          next unless File.file?(img)
+          meta = normalize_meta(read_sidecar("#{img}.json"), img)
+          meta['pos'] = i
+          write_sidecar("#{img}.json", img, meta)
+        end
+        { ok: true }
+      end
+
       def save_bytes(raw, ext, name, dir)
+        raw, ext = normalize_mixin_bytes(raw, ext.to_s)
         d = base_dir(dir)
         FileUtils.mkdir_p(d.to_s)
         base = "mix_#{Time.now.strftime('%Y%m%d_%H%M%S')}"
         path = unique_path(d.to_s, base, ext)
         File.binwrite(path, raw)
-        write_sidecar("#{path}.json", path, { 'name' => name.to_s[0, 120], 'caption' => '', 'active' => true })
-        entry = { 'id' => File.basename(path), 'file' => path, 'name' => name.to_s,
-                  'caption' => '', 'active' => true, 'mtime' => File.mtime(path).to_f }
+        meta = normalize_meta({ 'name' => name.to_s[0, 120], 'caption' => '', 'active' => true }, path)
+        write_sidecar("#{path}.json", path, meta)
+        entry = { 'id' => File.basename(path), 'file' => path, 'name' => meta['name'],
+                  'caption' => '', 'caption_neg' => '', 'role' => 'auto', 'weight' => 1.0,
+                  'apply_to' => 'both', 'pos' => meta['pos'] || 0,
+                  'crop' => nil, 'rotation' => 0.0,
+                  'active' => true, 'mtime' => File.mtime(path).to_f }
         Log.append('mixins_add', 'file' => File.basename(path))
         entry
+      end
+
+      # Привести байты примеси к норме (MAX_LONG_SIDE / MAX_BYTES):
+      # маленькое — как есть; большое — даунскейл; не вышло — понятная
+      # ошибка вместо тяжёлого запроса, падающего в студии.
+      def normalize_mixin_bytes(raw, ext)
+        ext = ext.to_s.downcase
+        ext = '.jpg' if ext == '.jpeg'
+        return [raw, ext] unless oversized?(raw, ext)
+
+        d = dims_from_bytes(raw, ext)
+        size_mb = (raw.bytesize.to_f / 1_048_576).round(1)
+        label = d ? "#{d[0]}x#{d[1]}, #{size_mb} МБ" : "#{size_mb} МБ"
+        resized = try_powershell_downscale(raw, ext)
+        return resized if resized
+
+        raise "картинка большая (#{label}) — сожми до #{MAX_LONG_SIDE} " \
+              'по длинной стороне и добавь снова'
+      end
+
+      def oversized?(raw, ext)
+        return true if raw.bytesize > MAX_BYTES
+
+        d = dims_from_bytes(raw, ext)
+        !d.nil? && d.max > MAX_LONG_SIDE
+      end
+
+      # Размеры картинки из байтов (без внешних библиотек).
+      # Неизвестный формат — nil (тогда давит только лимит по байтам).
+      def dims_from_bytes(raw, ext)
+        case ext.to_s.downcase
+        when '.png' then png_dims_from_bytes(raw)
+        when '.jpg', '.jpeg' then jpeg_dims_from_bytes(raw)
+        when '.webp' then webp_dims_from_bytes(raw)
+        end
+      rescue StandardError
+        nil
+      end
+
+      def png_dims_from_bytes(raw)
+        return nil if raw.bytesize < 24
+        return nil unless raw.getbyte(0) == 0x89 && raw[1, 3] == 'PNG'
+        return nil unless raw[12, 4] == 'IHDR' && raw[8, 4].unpack1('N') == 13
+
+        w, h = raw[16, 4].unpack1('N'), raw[20, 4].unpack1('N')
+        (w.to_i > 0 && h.to_i > 0 && w <= 100_000 && h <= 100_000) ? [w, h] : nil
+      end
+
+      # JPEG: идём по маркерам до SOF (там ширина/высота).
+      def jpeg_dims_from_bytes(raw)
+        n = raw.bytesize
+        return nil if n < 4 || raw.getbyte(0) != 0xFF || raw.getbyte(1) != 0xD8
+
+        sof = [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+               0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF].freeze
+        i = 2
+        while i + 3 < n
+          return nil unless raw.getbyte(i) == 0xFF
+
+          m = raw.getbyte(i + 1)
+          if m == 0xFF
+            i += 1
+            next
+          end
+          if m == 0xD8 || m == 0xD9 || m == 0x01 || (0xD0..0xD7).include?(m)
+            i += 2
+            next
+          end
+          return nil if i + 3 >= n
+
+          len = (raw.getbyte(i + 2) << 8) + raw.getbyte(i + 3)
+          return nil if len < 2 || i + 1 + len >= n
+          if sof.include?(m)
+            return nil if i + 9 >= n
+
+            h = (raw.getbyte(i + 5) << 8) + raw.getbyte(i + 6)
+            w = (raw.getbyte(i + 7) << 8) + raw.getbyte(i + 8)
+            return (w > 0 && h > 0) ? [w, h] : nil
+          end
+          i += 2 + len
+        end
+        nil
+      end
+
+      # WebP: RIFF....WEBP + чанки VP8 (lossy) / VP8L (lossless) / VP8X.
+      def webp_dims_from_bytes(raw)
+        return nil if raw.bytesize < 30
+        return nil unless raw[0, 4] == 'RIFF' && raw[8, 4] == 'WEBP'
+
+        case raw[12, 4]
+        when 'VP8 '
+          w = raw[26, 2].unpack1('v') & 0x3FFF
+          h = raw[28, 2].unpack1('v') & 0x3FFF
+          (w > 0 && h > 0) ? [w, h] : nil
+        when 'VP8L'
+          b1 = raw.getbyte(21)
+          b2 = raw.getbyte(22)
+          b3 = raw.getbyte(23)
+          b4 = raw.getbyte(24)
+          w = (b1 | ((b2 & 0x3F) << 8)) + 1
+          h = (((b2 >> 6) | (b3 << 2) | ((b4 & 0x0F) << 10))) + 1
+          (w > 0 && h > 0) ? [w, h] : nil
+        when 'VP8X'
+          w = raw.getbyte(21) | (raw.getbyte(22) << 8) | (raw.getbyte(23) << 16)
+          h = raw.getbyte(24) | (raw.getbyte(25) << 8) | (raw.getbyte(26) << 16)
+          w += 1
+          h += 1
+          (w > 0 && h > 0) ? [w, h] : nil
+        end
+      end
+
+      # Запуск внешней команды без вспышки чёрного консольного окна.
+      # system("powershell ...") на Windows идёт через cmd.exe + conhost —
+      # при старте превью это видно как моргнувшее чёрное окно
+      # (см. try_powershell_downscale / try_powershell_transform).
+      # WScript.Shell.Run(cmd, 0, true): 0 = SW_HIDE, true = ждать выхода,
+      # возвращает код выхода. Fallback — обычный system.
+      def run_hidden(cmd)
+        begin
+          require 'win32ole'
+          shell = WIN32OLE.new('WScript.Shell')
+          return shell.Run(cmd, 0, true) == 0
+        rescue LoadError, StandardError
+          nil
+        end
+        system(cmd)
+      end
+
+      # Даунскейл штатными средствами Windows (System.Drawing): без новых
+      # зависимостей в поставке. WebP GDI+ не читает — пропускаем.
+      # Возвращает [bytes, ext] или nil (не Windows / ошибка / нечего жать).
+      def try_powershell_downscale(raw, ext)
+        return nil unless RUBY_PLATFORM =~ /mingw|mswin/
+        return nil if ext.to_s.downcase == '.webp'
+
+        require 'tmpdir'
+        require 'timeout'
+        Dir.mktmpdir do |d|
+          src = File.join(d, "in#{ext}")
+          dst = File.join(d, "out#{ext}")
+          ps = File.join(d, 'shrink.ps1')
+          File.binwrite(src, raw)
+          File.write(ps, powershell_shrink_script, encoding: 'UTF-8')
+          cmd = "powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass " \
+                "-File \"#{ps}\" -In \"#{src}\" -Out \"#{dst}\" -Max #{MAX_LONG_SIDE}"
+          ok = Timeout.timeout(90) { run_hidden(cmd) }
+          return nil unless ok && File.file?(dst) && File.size(dst) > 0
+
+          out = File.binread(dst)
+          return nil if oversized?(out, ext)
+
+          [out, ext.to_s.downcase]
+        end
+      rescue StandardError
+        nil
+      end
+
+      def powershell_shrink_script
+        <<~PS
+          param([string]$In, [string]$Out, [int]$Max = #{MAX_LONG_SIDE})
+          Add-Type -AssemblyName System.Drawing
+          $s = [System.Drawing.Bitmap]::FromFile($In)
+          try {
+            $w = $s.Width; $h = $s.Height
+            $sc = [Math]::Min(1.0, $Max / [Math]::Max($w, $h))
+            if ($sc -ge 1) { $s.Dispose(); exit 0 }
+            $nw = [Math]::Max(1, [int]($w * $sc)); $nh = [Math]::Max(1, [int]($h * $sc))
+            $d = New-Object System.Drawing.Bitmap($nw, $nh)
+            try {
+              $g = [System.Drawing.Graphics]::FromImage($d)
+              try {
+                $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $g.DrawImage($s, 0, 0, $nw, $nh)
+              } finally { $g.Dispose() }
+              $e = [System.IO.Path]::GetExtension($Out).ToLower()
+              if ($e -eq '.png') {
+                $d.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
+              } else {
+                $c = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+                $p = New-Object System.Drawing.Imaging.EncoderParameters(1)
+                $p.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]85)
+                $d.Save($Out, $c[0], $p)
+                $p.Dispose()
+              }
+            } finally { $d.Dispose() }
+          } finally { $s.Dispose() }
+        PS
+      end
+
+      # Путь референса для задачи: большое жмём во временную копию (кэш по
+      # размеру+mtime исходника), маленькое — как есть. Покрывает примеси,
+      # добавленные до сжатия при добавлении, и старые панели без даунскейла:
+      # студия режет референсы шире 4096px с HTTP 400, тяжёлые жрут VRAM.
+      def job_path(path, crop = nil, rotation = nil)
+        p = path.to_s
+        return p unless File.file?(p)
+        ext = File.extname(p).downcase
+        return p unless IMAGE_EXTS.include?(ext)
+        crop_n = norm_crop(crop)
+        rot_n = norm_rotation(rotation)
+        raw = File.binread(p) rescue (return p)
+        need_t = needs_transform?(crop_n, rot_n)
+        return p unless oversized?(raw, ext) || need_t
+
+        cached_transform(p, raw, ext, crop_n, rot_n) || p
+      end
+
+      def cached_shrink(path, raw, ext)
+        cached_transform(path, raw, ext, nil, 0.0)
+      end
+
+      def cached_transform(path, raw, ext, crop, rotation)
+        st = File.stat(path) rescue (return nil)
+        crop_n = norm_crop(crop)
+        rot_n = norm_rotation(rotation)
+        key = "#{File.basename(path, '.*')}_#{st.size}_#{st.mtime.to_i}#{transform_key_suffix(crop_n, rot_n)}"
+        d = shrink_cache_dir
+        return nil if d.nil?
+
+        dst = File.join(d, "#{key}#{ext}")
+        return dst if File.file?(dst) && File.size(dst) > 0
+        out = needs_transform?(crop_n, rot_n) ? try_powershell_transform(raw, ext, crop_n, rot_n) : try_powershell_downscale(raw, ext)
+        return nil if out.nil?
+
+        File.binwrite(dst, out[0])
+        Log.append('mixins_shrink', 'file' => File.basename(path), 'to' => File.basename(dst))
+        dst
+      rescue StandardError
+        nil
+      end
+
+      def transform_key_suffix(crop, rotation)
+        r = norm_rotation(rotation)
+        return '' if crop.nil? && r == 0.0
+        c = crop.nil? ? 'full' : "#{(crop['x'] * 10_000).round}-#{(crop['y'] * 10_000).round}-#{(crop['w'] * 10_000).round}-#{(crop['h'] * 10_000).round}"
+        "_t#{c}_r#{format('%.1f', r).tr('.', 'p').tr('-', 'm')}"
+      end
+
+      def needs_transform?(crop, rotation)
+        return true unless norm_crop(crop).nil?
+        norm_rotation(rotation) != 0.0
+      end
+
+      def try_powershell_transform(raw, ext, crop, rotation)
+        crop_n = norm_crop(crop)
+        rot_n = norm_rotation(rotation)
+        return try_powershell_downscale(raw, ext) if crop_n.nil? && rot_n == 0.0
+        return nil unless RUBY_PLATFORM =~ /mingw|mswin/
+        return nil if ext.to_s.downcase == '.webp' && !crop_n.nil?
+
+        require 'tmpdir'
+        require 'timeout'
+        Dir.mktmpdir do |d|
+          src = File.join(d, "in#{ext}")
+          dst = File.join(d, "out#{ext}")
+          ps = File.join(d, 'crop.ps1')
+          File.binwrite(src, raw)
+          File.write(ps, powershell_transform_script, encoding: 'UTF-8')
+          cx = crop_n.nil? ? -1 : crop_n['x'].to_f
+          cy = crop_n.nil? ? -1 : crop_n['y'].to_f
+          cw = crop_n.nil? ? -1 : crop_n['w'].to_f
+          ch = crop_n.nil? ? -1 : crop_n['h'].to_f
+          cmd = "powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass " \
+                "-File \"#{ps}\" -In \"#{src}\" -Out \"#{dst}\" -Max #{MAX_LONG_SIDE} " \
+                "-Angle #{rot_n} -Cx #{cx} -Cy #{cy} -Cw #{cw} -Ch #{ch}"
+          ok = Timeout.timeout(120) { run_hidden(cmd) }
+          return nil unless ok && File.file?(dst) && File.size(dst) > 0
+
+          out = File.binread(dst)
+          return nil if out.empty? || oversized?(out, ext)
+
+          [out, ext.to_s.downcase]
+        end
+      rescue StandardError
+        nil
+      end
+
+      def powershell_transform_script
+        <<~PS
+          param([string]$In, [string]$Out, [int]$Max = #{MAX_LONG_SIDE},
+                [double]$Angle = 0, [double]$Cx = -1, [double]$Cy = -1,
+                [double]$Cw = -1, [double]$Ch = -1)
+          Add-Type -AssemblyName System.Drawing
+          $s = [System.Drawing.Bitmap]::FromFile($In)
+          try {
+            $cur = $s
+            if ($Cx -ge 0 -and $Cy -ge 0 -and $Cw -gt 0 -and $Ch -gt 0) {
+              $rx = [Math]::Max(0, [int][Math]::Round($cur.Width * $Cx))
+              $ry = [Math]::Max(0, [int][Math]::Round($cur.Height * $Cy))
+              $rw = [Math]::Min($cur.Width - $rx, [Math]::Max(1, [int][Math]::Round($cur.Width * $Cw)))
+              $rh = [Math]::Min($cur.Height - $ry, [Math]::Max(1, [int][Math]::Round($cur.Height * $Ch)))
+              if ($rw -le 0 -or $rh -le 0) { throw 'bad crop rect' }
+              $crop = New-Object System.Drawing.Bitmap($rw, $rh)
+              try {
+                $g2 = [System.Drawing.Graphics]::FromImage($crop)
+                try {
+                  $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                  $g2.DrawImage($cur, (New-Object System.Drawing.Rectangle(0, 0, $rw, $rh)),
+                    $rx, $ry, $rw, $rh, [System.Drawing.GraphicsUnit]::Pixel)
+                } finally { $g2.Dispose() }
+                if ($cur -ne $s) { $cur.Dispose() }
+                $cur = $crop
+              } catch { $crop.Dispose(); throw }
+            }
+            if ([Math]::Abs($Angle) -ge 0.05) {
+              $rad = $Angle * [Math]::PI / 180.0
+              $c = [Math]::Abs([Math]::Cos($rad)); $sn = [Math]::Abs([Math]::Sin($rad))
+              $nw = [Math]::Max(1, [int][Math]::Round($cur.Width * $c + $cur.Height * $sn))
+              $nh = [Math]::Max(1, [int][Math]::Round($cur.Width * $sn + $cur.Height * $c))
+              $d = New-Object System.Drawing.Bitmap($nw, $nh)
+              try {
+                $g = [System.Drawing.Graphics]::FromImage($d)
+                try {
+                  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                  $g.Clear([System.Drawing.Color]::Transparent)
+                  $g.TranslateTransform($nw / 2.0, $nh / 2.0)
+                  $g.RotateTransform($Angle)
+                  $g.TranslateTransform(-$cur.Width / 2.0, -$cur.Height / 2.0)
+                  $g.DrawImage($cur, 0, 0, $cur.Width, $cur.Height)
+                } finally { $g.Dispose() }
+                if ($cur -ne $s) { $cur.Dispose() }
+                $cur = $d
+              } catch { $d.Dispose(); throw }
+            }
+            $w = $cur.Width; $h = $cur.Height
+            $sc = [Math]::Min(1.0, $Max / [Math]::Max($w, $h))
+            $fin = $cur
+            if ($sc -lt 1) {
+              $nw2 = [Math]::Max(1, [int]($w * $sc)); $nh2 = [Math]::Max(1, [int]($h * $sc))
+              $d2 = New-Object System.Drawing.Bitmap($nw2, $nh2)
+              try {
+                $g3 = [System.Drawing.Graphics]::FromImage($d2)
+                try {
+                  $g3.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                  $g3.DrawImage($cur, 0, 0, $nw2, $nh2)
+                } finally { $g3.Dispose() }
+                if ($cur -ne $s) { $cur.Dispose() }
+                $fin = $d2
+              } catch { $d2.Dispose(); throw }
+            }
+            try {
+              $e = [System.IO.Path]::GetExtension($Out).ToLower()
+              if ($e -eq '.png') {
+                $fin.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
+              } else {
+                $c2 = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+                $pp = New-Object System.Drawing.Imaging.EncoderParameters(1)
+                $pp.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]85)
+                $fin.Save($Out, $c2[0], $pp)
+                $pp.Dispose()
+              }
+            } finally { if ($fin -ne $cur -and $fin -ne $s) { $fin.Dispose() } }
+            if ($cur -ne $s) { $cur.Dispose() }
+          } finally { $s.Dispose() }
+        PS
+      end
+
+      def shrink_cache_dir
+        require 'tmpdir'
+        d = File.join(Dir.tmpdir, 'dn1sup_su2vis', 'mix_small')
+        FileUtils.mkdir_p(d)
+        d
+      rescue StandardError
+        nil
       end
 
       def read_sidecar(sp)
@@ -124,12 +542,86 @@ module Dn1sup
       end
 
       def write_sidecar(sp, img, meta)
-        m = meta.is_a?(Hash) ? meta : {}
+        m = normalize_meta(meta.is_a?(Hash) ? meta : {}, img)
         doc = { 'name' => m['name'] || File.basename(img.to_s),
                 'caption' => (m['caption'] || '').to_s,
+                'caption_neg' => (m['caption_neg'] || '').to_s,
+                'role' => m['role'] || 'auto',
+                'weight' => m['weight'] || 1.0,
+                'apply_to' => m['apply_to'] || 'both',
+                'pos' => (m['pos'] || 0).to_i,
+                'crop' => m['crop'],
+                'rotation' => m['rotation'] || 0.0,
                 'active' => m.fetch('active', true) ? true : false }
         File.write(sp.to_s, JSON.pretty_generate(doc), encoding: 'UTF-8')
         doc
+      end
+
+      def norm_role(v)
+        s = v.to_s.strip.downcase
+        ROLES.include?(s) ? s : 'auto'
+      end
+
+      def norm_apply_to(v)
+        s = v.to_s.strip.downcase
+        APPLY_TO.include?(s) ? s : 'both'
+      end
+
+      def norm_weight(v)
+        f = v.to_f
+        f = 1.0 if f.nil? || (v.to_s.empty? && f.zero?)
+        [[f, 0.1].max, 2.0].min.round(2)
+      rescue StandardError
+        1.0
+      end
+
+      def norm_crop(v)
+        return nil if v.nil?
+        return nil if v.is_a?(String) && v.strip.empty?
+        h = v.is_a?(Hash) ? v : nil
+        return nil unless h
+        x = (h['x'] || h[:x] || 0).to_f
+        y = (h['y'] || h[:y] || 0).to_f
+        w = (h['w'] || h[:w] || 0).to_f
+        hh = (h['h'] || h[:h] || 0).to_f
+        return nil if w <= 0.005 || hh <= 0.005
+        x = [[x, 0.0].max, 0.99].min
+        y = [[y, 0.0].max, 0.99].min
+        w = [[w, 0.01].max, 1.0 - x].min
+        hh = [[hh, 0.01].max, 1.0 - y].min
+        return nil if w < 0.01 || hh < 0.01
+        { 'x' => x.round(4), 'y' => y.round(4), 'w' => w.round(4), 'h' => hh.round(4) }
+      rescue StandardError
+        nil
+      end
+
+      def norm_rotation(v)
+        return 0.0 if v.nil?
+        return 0.0 if v.to_s.strip.empty?
+        f = v.to_f
+        return 0.0 unless f.finite?
+        f = ((f + 180.0) % 360.0) - 180.0
+        f = 180.0 if f == -180.0
+        f = f.round(1)
+        f.abs < 0.05 ? 0.0 : [[f, -180.0].max, 180.0].min
+      rescue StandardError
+        0.0
+      end
+
+      # Дефолты для старых сайдкаров (только caption/active).
+      def normalize_meta(m, img = nil)
+        h = m.is_a?(Hash) ? m.dup : {}
+        h['name'] = (h['name'] || (img ? File.basename(img.to_s) : '')).to_s[0, 120]
+        h['caption'] = (h['caption'] || '').to_s[0, 500]
+        h['caption_neg'] = (h['caption_neg'] || h['ignore'] || '').to_s[0, 500]
+        h['role'] = norm_role(h['role'])
+        h['weight'] = norm_weight(h.key?('weight') ? h['weight'] : 1.0)
+        h['apply_to'] = norm_apply_to(h['apply_to'])
+        h['pos'] = (h['pos'] || 0).to_i
+        h['crop'] = norm_crop(h['crop'])
+        h['rotation'] = norm_rotation(h['rotation'])
+        h['active'] = h.fetch('active', true) ? true : false
+        h
       end
 
       def unique_path(dir, base, ext)

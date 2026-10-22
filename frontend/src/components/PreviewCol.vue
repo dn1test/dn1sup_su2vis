@@ -47,7 +47,7 @@
         </div>
         <div v-else class="w-full bg-slate-200 flex items-center justify-center text-xs text-slate-500 py-6">загружаю…</div>
         <div class="px-2 py-1 flex items-center justify-between gap-1">
-          <span class="text-xs text-slate-600 truncate min-w-0">#{{ r.scene }}<span v-if="r.variant"> · вар.{{ r.variant + 1 }}</span> · seed {{ r.seed }} · {{ r.width }}×{{ r.height }}</span>
+          <span class="text-xs text-slate-600 truncate min-w-0">#{{ r.scene ?? 'промпт' }}<span v-if="r.variant"> · вар.{{ r.variant + 1 }}</span> · seed {{ r.seed }} · {{ r.width }}×{{ r.height }}</span>
           <button class="shrink-0 px-2 py-1 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-500"
             @click.stop="$emit('final-one', { scene: r.scene, seed: r.seed })">В финал</button>
         </div>

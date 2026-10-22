@@ -33,7 +33,7 @@
           <div v-else class="w-full aspect-[4/3] bg-slate-200 flex items-center justify-center text-xs text-slate-500">загружаю…</div>
         </button>
         <div class="px-2 py-1">
-          <div class="text-xs font-medium">Сцена #{{ r.scene }}<span v-if="r.variant"> · вар.{{ r.variant + 1 }}</span> · seed {{ r.seed }} · {{ r.width }}×{{ r.height }}</div>
+          <div class="text-xs font-medium">Сцена #{{ r.scene ?? 'промпт' }}<span v-if="r.variant"> · вар.{{ r.variant + 1 }}</span> · seed {{ r.seed }} · {{ r.width }}×{{ r.height }}</div>
           <div class="text-xs text-emerald-700 break-all">{{ shortFile(r.file) }}</div>
         </div>
       </div>

@@ -19,7 +19,8 @@ module Dn1sup
       # Возвращает полный путь картинки.
       def save_preview(dir, bytes, meta = {})
         FileUtils.mkdir_p(dir.to_s)
-        base = "preview_s#{meta['scene'].to_i}_seed#{meta['seed'].to_i}" \
+        tag = meta['scene'].nil? ? 'prompt' : "s#{meta['scene'].to_i}"
+        base = "preview_#{tag}_seed#{meta['seed'].to_i}" \
                "_v#{meta['variant'].to_i}_#{Time.now.strftime('%Y%m%d_%H%M%S')}"
         path = unique_path(dir.to_s, base, '.png')
         File.binwrite(path, bytes)

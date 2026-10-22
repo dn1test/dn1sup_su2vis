@@ -281,6 +281,11 @@ module Dn1sup
         assert(content.include?('mixins_update'), 'panel.html без подписей примесей — устаревшая сборка')
         assert(content.include?('Примеси'), 'panel.html без колонки примесей — устаревшая сборка')
         assert(content.include?('Удалить файл'), 'panel.html без иконки удаления — устаревшая сборка')
+        assert(content.include?('Выделить / повернуть'), 'panel.html без редактора выделения — устаревшая сборка')
+        assert(content.include?('Только выделение'), 'panel.html без тумблера выделения — устаревшая сборка')
+        assert(content.include?('toggle-enabled'), 'panel.html без выключателей колонок — устаревшая сборка')
+        assert(content.include?('только по промпту'), 'panel.html без режима только-промпт — устаревшая сборка')
+        assert(content.include?('Показать оригинал'), 'panel.html без просмотра оригинала — устаревшая сборка')
         assert(content.include?('type="radio"') || content.include?('su2vis-scene'), 'panel.html без radio выбора одной сцены — устаревшая сборка')
         assert(!content.include?('select-all'), 'panel.html с кнопкой Все — устаревшая сборка')
         assert(content.bytesize > 50_000, 'panel.html подозрительно мал — бандл не встроен')
@@ -342,6 +347,37 @@ module Dn1sup
         assert_equal(0.05, Client.norm_strength(nil))
         assert_equal(0.4, Client.norm_strength(0.4))
         assert_equal(1.0, Client.norm_strength(1.0))
+      end
+
+      test 'client: preset_for klein даёт 4 шага, остальным — дефолт студии' do
+        klein = Client.preset_for('unsloth/flux-3-image-klein-GGUF')
+        assert_equal(4, klein['steps'], "klein steps: #{klein.inspect}")
+        assert_equal(1.0, klein['guidance'], "klein guidance: #{klein.inspect}")
+        assert_equal('balanced', klein['memory_mode'], "klein memory: #{klein.inspect}")
+        klein2 = Client.preset_for('unsloth/FLUX.2-klein-9B-GGUF')
+        assert_equal(4, klein2['steps'], "flux2-klein steps: #{klein2.inspect}")
+        qwen = Client.preset_for('Qwen-Image-GGUF')
+        assert_equal(50, qwen['steps'], "qwen steps: #{qwen.inspect}")
+        assert_equal('low_vram', qwen['memory_mode'], "qwen memory: #{qwen.inspect}")
+        # LLM без image-семьи — не klein
+        llm = Client.preset_for('unsloth/Qwen3.8-27B-GGUF', { 'steps' => 16, 'guidance' => 1.0 })
+        assert_equal(16, llm['steps'], "fallback steps: #{llm.inspect}")
+        assert_equal('дефолт студии', llm['source'], "fallback source: #{llm.inspect}")
+        assert(llm['memory_mode'].nil?, 'fallback память не трогаем')
+      end
+
+      test 'client: pick_variant берёт точный файл, сначала скачанный' do
+        vars = [
+          { 'filename' => 'flux-2-klein-9b-BF16.gguf', 'quant' => 'BF16', 'downloaded' => false },
+          { 'filename' => 'flux-2-klein-9b-Q8_0.gguf', 'quant' => 'Q8_0', 'downloaded' => true },
+          { 'filename' => 'flux-2-klein-9b-Q6_K.gguf', 'quant' => 'Q6_K', 'downloaded' => false }
+        ]
+        assert_equal('flux-2-klein-9b-Q8_0.gguf', Client.pick_variant(vars, 'Q8_0'))
+        assert_equal('flux-2-klein-9b-Q6_K.gguf', Client.pick_variant(vars, 'q6_k'))
+        assert_equal('flux-2-klein-9b-BF16.gguf',
+                     Client.pick_variant(vars, 'NOPE', { 'filename' => 'flux-2-klein-9b-BF16.gguf' }))
+        assert_equal('', Client.pick_variant(vars, 'NOPE'))
+        assert_equal('', Client.pick_variant([], 'Q8_0'))
       end
 
       test 'gallery: превью сохраняется с сайдкаром параметров' do
@@ -458,6 +494,152 @@ module Dn1sup
         end
       end
 
+      test 'mixins: dims_from_bytes различает PNG/JPEG/WebP' do
+        png = "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
+              [64].pack('N') + [48].pack('N') + ("\x00".b * 8)
+        assert_equal([64, 48], Mixins.dims_from_bytes(png, '.png'))
+        jpg = "\xFF\xD8\xFF\xC0\x00\x0B\x08\x00\x10\x00\x20\x01\x01\x11\x00\xFF\xD9".b
+        assert_equal([32, 16], Mixins.dims_from_bytes(jpg, '.jpg'))
+        assert_equal([32, 16], Mixins.dims_from_bytes(jpg, '.jpeg'))
+        webp = 'RIFF'.b + [18].pack('V') + 'WEBP'.b + 'VP8X'.b + [10].pack('V') +
+               "\x00".b + [99].pack('V')[0, 3] + [49].pack('V')[0, 3] + "\x00\x00\x00".b
+        assert_equal([100, 50], Mixins.dims_from_bytes(webp, '.webp'))
+        assert(Mixins.dims_from_bytes('мусор'.b, '.png').nil?, 'мусор — nil')
+        assert(Mixins.dims_from_bytes('мусор'.b, '.xxx').nil?, 'неизвестный ext — nil')
+      end
+
+      test 'mixins: oversized давит по длинной стороне и байтам' do
+        small_png = "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
+                    [800].pack('N') + [600].pack('N') + ("\x00".b * 8)
+        assert(!Mixins.oversized?(small_png, '.png'), '800x600 — норма')
+        big_png = "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
+                  [4000].pack('N') + [3000].pack('N') + ("\x00".b * 8)
+        assert(Mixins.oversized?(big_png, '.png'), '4000px — oversize')
+        fat = 'x'.b * (Mixins::MAX_BYTES + 1)
+        assert(Mixins.oversized?(fat, '.jpg'), 'байты сверх лимита — oversize')
+      end
+
+      test 'mixins: normalize маленькое пропускает, мусор-гигант отклоняет' do
+        png = "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
+              [100].pack('N') + [100].pack('N') + ("\x00".b * 64)
+        out, ext = Mixins.normalize_mixin_bytes(png, '.png')
+        assert_equal('.png', ext, 'ext малой картинки')
+        assert_equal(png, out, 'малую картинку не трогаем')
+        fat = 'x'.b * (Mixins::MAX_BYTES + 1)
+        begin
+          Mixins.normalize_mixin_bytes(fat, '.jpg')
+          assert(false, 'гиганта должны отклонить или сжать')
+        rescue StandardError => e
+          assert(e.message.include?('большая') || e.message.include?('сожми'), "не тот отказ: #{e.message}")
+        end
+      end
+      test 'mixins: norm_crop/norm_rotation чистят мусор' do
+        assert(Mixins.norm_crop(nil).nil?, 'nil — nil')
+        assert(Mixins.norm_crop('').nil?, 'пусто — nil')
+        assert(Mixins.norm_crop({ 'x' => 0.1, 'y' => 0.2, 'w' => 0.5, 'h' => 0.4 }) == { 'x' => 0.1, 'y' => 0.2, 'w' => 0.5, 'h' => 0.4 }, 'норма')
+        assert(Mixins.norm_crop({ 'x' => -1, 'y' => 0, 'w' => 0.001, 'h' => 0.5 }).nil?, 'кроха — nil')
+        assert(Mixins.norm_crop({ 'x' => 0.9, 'y' => 0.9, 'w' => 0.5, 'h' => 0.5 }) == { 'x' => 0.9, 'y' => 0.9, 'w' => 0.1, 'h' => 0.1 }, 'обрезка у края')
+        assert(Mixins.norm_crop({ x: 0.2, y: 0.3, w: 0.4, h: 0.2 }) == { 'x' => 0.2, 'y' => 0.3, 'w' => 0.4, 'h' => 0.2 }, 'символьные ключи')
+        assert_equal(0.0, Mixins.norm_rotation(nil), 'nil — 0')
+        assert_equal(0.0, Mixins.norm_rotation(''), 'пусто — 0')
+        assert_equal(90.0, Mixins.norm_rotation(90), '90')
+        assert_equal(-90.0, Mixins.norm_rotation(-90), '-90')
+        assert_equal(-90.0, Mixins.norm_rotation(270), '270 -> -90')
+        assert_equal(0.0, Mixins.norm_rotation(0.01), 'кроха — 0')
+        assert_equal(0.0, Mixins.norm_rotation('мусор'), 'мусор — 0')
+      end
+
+      test 'mixins: update хранит crop/rotation, job_path без трансформов не трогает файл' do
+        Dir.mktmpdir do |d|
+          out = File.join(d, 'out')
+          raw = "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
+                [100].pack('N') + [100].pack('N') + ("\x00".b * 64)
+          require 'base64'
+          url = "data:image/png;base64,#{Base64.strict_encode64(raw)}"
+          e = Mixins.add_data(url, 'фр.png', out)
+          u = Mixins.update(e['id'], crop: { 'x' => 0.1, 'y' => 0.1, 'w' => 0.5, 'h' => 0.5 }, rotation: 90, dir: out)
+          assert_equal({ 'x' => 0.1, 'y' => 0.1, 'w' => 0.5, 'h' => 0.5 }, u['crop'], 'кроп не сохранился')
+          assert_equal(90.0, u['rotation'], 'поворот не сохранился')
+          list = Mixins.list(out)
+          assert_equal(u['crop'], list.first['crop'], 'кроп в списке')
+          assert_equal(90.0, list.first['rotation'], 'поворот в списке')
+          got = Mixins.active_for_job([{ 'path' => e['file'], 'caption' => 'x', 'active' => true, 'crop' => u['crop'], 'rotation' => 90 }])
+          assert_equal(u['crop'], got.first['crop'], 'кроп в задаче')
+          assert_equal(90.0, got.first['rotation'], 'поворот в задаче')
+          u2 = Mixins.update(e['id'], crop: nil, rotation: 0, dir: out)
+          assert(u2['crop'].nil?, 'сброс кропа')
+          assert_equal(0.0, u2['rotation'], 'сброс поворота')
+          assert_equal(e['file'], Mixins.job_path(e['file']), 'без трансформов файл не трогаем')
+          assert_equal(e['file'], Mixins.job_path(e['file'], nil, 0), 'нули — тот же файл')
+        end
+      end
+
+      test 'panel: within_dir держит файл внутри, .. режет' do
+        assert(Panel.respond_to?(:within_dir?), 'нет Panel.within_dir?')
+        assert_equal(File.expand_path('/a/b/r.jpg'), Panel.within_dir?('/a/b', '/a/b/r.jpg'))
+        assert(Panel.within_dir?('/a/b', '/a/b/../evil.jpg').nil?, 'выход через .. должны отклонить')
+        assert(Panel.within_dir?('/a/b', '/a/other.jpg').nil?, 'чужую папку должны отклонить')
+      end
+
+      test 'panel: within_dir чинит смешанные сепараторы Windows' do
+        skip('только Windows: бэкслэши в пути') unless RUBY_PLATFORM =~ /mingw|mswin/
+        dir = 'C:\\su2vis_mix_test\\out'
+        f = 'C:\\su2vis_mix_test\\out\\Scene_6.jpg'
+        assert_equal(File.expand_path(f), Panel.within_dir?(dir, f), 'легальный финал вне папки')
+      end
+
+      test 'mixins: job_path мелочь пропускает как есть' do
+        Dir.mktmpdir do |d|
+          small = File.join(d, 'ok.png')
+          File.binwrite(small, "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
+                        [100].pack('N') + [100].pack('N') + ("\x00".b * 64))
+          assert_equal(small, Mixins.job_path(small), 'малую не трогаем')
+          assert_equal(File.join(d, 'nope.png'), Mixins.job_path(File.join(d, 'nope.png')), 'нет файла — тот же путь')
+          txt = File.join(d, 'note.txt')
+          File.write(txt, 'x')
+          assert_equal(txt, Mixins.job_path(txt), 'не картинку не трогаем')
+        end
+      end
+
+      test 'mixins: запуск powershell скрыт — нет system() с видимой консолью' do
+        src = File.read(File.join(__dir__, '..', 'mixins.rb'), encoding: 'UTF-8')
+        assert(Mixins.respond_to?(:run_hidden), 'нет Mixins.run_hidden')
+        assert(src.include?('WScript.Shell'), 'run_hidden без WScript.Shell.Run(…, 0, …)')
+        assert(src.include?('-WindowStyle Hidden'), 'powershell без -WindowStyle Hidden')
+        assert(!src.include?('2> NUL'), 'остался редирект через cmd.exe (2> NUL) — идёт через видимую консоль')
+        %w[try_powershell_downscale try_powershell_transform].each do |m|
+          body = src[/def #{m}.*?(?=^      def |\z)/m, 0] || ''
+          assert(body.include?('run_hidden'), "#{m} не использует run_hidden")
+          assert(!body.match?(/system\s*\(/), "#{m} зовёт system() напрямую — окно будет моргать")
+        end
+      end
+
+      test 'mixins: run_hidden ждёт выхода и возвращает успех' do
+        ok = Mixins.run_hidden('ruby -e "exit 0"')
+        assert_equal(true, ok, 'exit 0 должен дать true')
+        bad = Mixins.run_hidden('ruby -e "exit 3"')
+        assert_equal(false, bad, 'ненулевой код должен дать false')
+      end
+
+      test 'mixins: job_path большую жмёт в кэш' do
+        skip('только Windows: даунскейл через System.Drawing') unless RUBY_PLATFORM =~ /mingw|mswin/
+        require 'tmpdir'
+        Dir.mktmpdir do |d|
+          src = File.join(d, 'big.png')
+          ps = File.join(d, 'gen.ps1')
+          File.write(ps, "Add-Type -AssemblyName System.Drawing\n" \
+                         "$b = New-Object System.Drawing.Bitmap(2000, 1500)\n" \
+                         "$b.Save('#{src}', [System.Drawing.Imaging.ImageFormat]::Png)\n" \
+                         "$b.Dispose()\n", encoding: 'UTF-8')
+          ok = Mixins.run_hidden("powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"#{ps}\"")
+          skip('powershell не сгенерировал картинку') unless ok && File.file?(src)
+          got = Mixins.job_path(src)
+          assert(got != src, "большую должны ужать, вернули исходник: #{got}")
+          dims = Mixins.dims_from_bytes(File.binread(got), '.png')
+          assert(dims && dims.max <= Mixins::MAX_LONG_SIDE, "кэш не в норме: #{dims.inspect}")
+          assert_equal(got, Mixins.job_path(src), 'второй раз — тот же кэш')
+        end
+      end
       test 'client: mixins_prompt нумерует референсы со 2 и пропускает пустые' do
         assert_equal('', Client.mixins_prompt([]), 'пусто — пустая строка')
         assert_equal('', Client.mixins_prompt([{ 'caption' => '  ' }]), 'пустая подпись — пусто')
@@ -481,6 +663,71 @@ module Dn1sup
         assert_equal(170, Scenes::THUMB_W)
         assert_equal(128, Scenes::THUMB_H)
         assert(Scenes.method(:capture).parameters.include?([:key, :thin_lines]), 'у capture нет thin_lines:')
+      end
+
+      test 'выключатели колонок: дефолты, coerce, per-file' do
+        assert_equal(true, Settings::DEFAULTS['use_scenes'], 'дефолт use_scenes')
+        assert_equal(true, Settings::DEFAULTS['use_mixins'], 'дефолт use_mixins')
+        assert(Settings::PROJECT_KEYS.include?('use_scenes'), 'use_scenes должен быть per-file')
+        assert(Settings::PROJECT_KEYS.include?('use_mixins'), 'use_mixins должен быть per-file')
+        assert_equal(false, Settings.coerce('use_scenes', 'false'))
+        assert_equal(true, Settings.coerce('use_scenes', 'true'))
+        assert_equal(true, Settings.coerce('use_mixins', true))
+        assert_equal(false, Settings.coerce('use_mixins', false))
+      end
+
+      test 'jobs: режим без сцены (nil) — имена и размеры из настроек' do
+        assert_equal('prompt', Jobs.safe_name(nil), 'safe_name(nil)')
+        name = Jobs.expand_name({ 'name_template' => '{scene}{suffix}_{date}', 'suffix' => '_ph' }, nil, 7)
+        assert(name.include?('prompt'), "имя без сцены: #{name.inspect}")
+        assert(!name.include?('{'), 'плейсхолдеры не раскрыты')
+        w, h = Jobs.default_dims({ 'final_w' => 1280, 'final_h' => 960 })
+        assert_equal([1280, 960], [w, h], 'размер из настроек')
+        assert_equal([1024, 1024], Jobs.default_dims({ 'final_w' => 0, 'final_h' => 0 }), 'мусор — квадрат')
+      end
+
+      test 'gallery: превью без сцены пишется с тегом prompt' do
+        Dir.mktmpdir do |d|
+          f = Gallery.save_preview(d, "\x89PNG\r\n\x1A\n".b + 'x' * 16,
+                                   { 'scene' => nil, 'seed' => 7, 'variant' => 0,
+                                     'width' => 256, 'height' => 256 })
+          assert(File.file?(f), 'картинка не записана')
+          assert(File.basename(f).start_with?('preview_prompt_'), "тег prompt потерян: #{f.inspect}")
+          m = JSON.parse(File.read("#{f}.json", encoding: 'UTF-8'))
+          assert(m['scene'].nil?, 'сцена в сайдкаре должна быть nil')
+        end
+      end
+
+      test 'client: generate без эскиза шлёт только примеси (без init_image/strength)' do
+        bodies = []
+        fake = Object.new
+        fake.define_singleton_method(:request) do |req|
+          bodies << JSON.parse(req.body)
+          raise 'стоп-тест'
+        end
+        orig_api = Client.method(:api)
+        Client.define_singleton_method(:api) { |_url| fake }
+        begin
+          Dir.mktmpdir do |d|
+            ref = File.join(d, 'ref.png')
+            File.binwrite(ref, "\x89PNG\r\n\x1A\n".b + 'x' * 16)
+            begin
+              Client.generate('http://127.0.0.1:9', 'k', nil, prompt: 'p', width: 256, height: 256,
+                              extra_references: [ref], mixins_prompt: 'доп')
+              assert(false, 'generate должен был дойти до HTTP')
+            rescue RuntimeError => e
+              raise unless e.message == 'стоп-тест'
+            end
+          end
+        ensure
+          Client.define_singleton_method(:api, orig_api)
+        end
+        assert_equal(1, bodies.size, 'должен быть один запрос')
+        b = bodies.first
+        assert(!b.key?('init_image'), "init_image без эскиза: #{b.keys.inspect}")
+        assert(!b.key?('strength'), "strength без эскиза: #{b.keys.inspect}")
+        assert_equal(1, b['reference_images'].size, 'только примесь в референсах')
+        assert(b['prompt'].include?('доп'), 'дописка примесей потеряна')
       end
 
       test 'scenes: список сцен читается (пустая модель — пустой список)' do
