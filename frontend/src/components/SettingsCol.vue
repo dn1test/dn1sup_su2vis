@@ -3,7 +3,7 @@
     <div class="shrink-0 px-3 py-2 border-b bg-slate-50 flex gap-1">
       <button @click="tab = 'settings'"
         class="flex-1 px-2 py-1 text-xs rounded"
-        :class="tab === 'settings' ? 'bg-slate-900 text-white' : 'hover:bg-slate-200'">5 · Настройки</button>
+        :class="tab === 'settings' ? 'bg-slate-900 text-white' : 'hover:bg-slate-200'">Настройки</button>
       <button @click="tab = 'log'; $emit('load-log')"
         class="flex-1 px-2 py-1 text-xs rounded"
         :class="tab === 'log' ? 'bg-slate-900 text-white' : 'hover:bg-slate-200'">Журнал ({{ log.length }})</button>
@@ -50,16 +50,12 @@
         <pre v-else-if="enhancePreview && enhancePreview.text" class="text-[11px] whitespace-pre-wrap max-h-48 overflow-y-auto bg-slate-50 border rounded p-2">{{ enhancePreview.text }}</pre>
         <div v-else class="text-xs text-slate-400">Как тумблер Preview в студии: что реально уйдёт в модель.</div>
       </div>
-      <div class="grid grid-cols-2 gap-2">
+      <div class="grid grid-cols-1 gap-2">
         <label class="block">
-          <span class="text-xs text-slate-500">Seed</span>
+          <span class="text-xs text-slate-500">Seed (из превью — клик по карточке; пусто = случайно)</span>
           <input type="text" inputmode="numeric" placeholder="Random if empty"
             :value="modelValue.seed < 0 ? '' : modelValue.seed" @input="updSeed($event.target.value)"
             class="mt-1 w-full border rounded p-1.5" />
-        </label>
-        <label class="flex items-end gap-2 pb-1">
-          <input type="checkbox" :checked="modelValue.seed_locked" @change="upd('seed_locked', $event.target.checked)" />
-          <span class="text-xs">Замок seed</span>
         </label>
       </div>
       <div class="space-y-2">

@@ -59,7 +59,7 @@ const mockScenes = [
 
 const mockSettings = {
   prompt: 'Photorealistic render based on the provided sketch...',
-  seed: -1, seed_locked: false, preview_max: 768, final_mode: 'sketch',
+  seed: -1, preview_max: 768, final_mode: 'sketch',
   strength: 1.0, steps: 4, guidance: 1.0, memory_mode: 'balanced',
   allow_oversized: true, suffix: '_photorealistic', ext: 'jpg',
   unsloth_url: 'http://127.0.0.1:8888', unsloth_key: '',

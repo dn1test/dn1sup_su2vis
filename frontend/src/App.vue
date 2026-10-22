@@ -337,7 +337,6 @@ async function updateColumnSettings(patch) {
 
 async function selectPreview({ scene, seed }) {
   settings.value.seed = seed
-  settings.value.seed_locked = true
   await saveSettings()
   flash(`Выбрано превью #${scene}, seed ${seed} — в настройках`)
 }
@@ -467,8 +466,8 @@ async function finalOne({ scene, seed }) {
   busyKind.value = 'final'
   const sketches = await savePreviewRefs([entry])
   const st = useScenes.value
-    ? { ...settings.value, seeds: { [scene]: seed }, seed_locked: true, from_preview: true }
-    : { ...settings.value, seeds: { prompt: seed }, seed_locked: true, from_preview: true }
+    ? { ...settings.value, seeds: { [scene]: seed }, from_preview: true }
+    : { ...settings.value, seeds: { prompt: seed }, from_preview: true }
   const j = await callRuby('jobs_start', { kind: 'final', scenes: useScenes.value ? [scene] : [], sketches, mixins: activeMixins(), settings: st })
   if (j) finalJobs.value = [...finalJobs.value, j]
   startPoll('final')
@@ -485,7 +484,7 @@ async function finalAll() {
   finalJobs.value = []
   if (!useScenes.value) {
     const seed = list[0].seed
-    const st = { ...settings.value, seeds: { prompt: seed }, seed_locked: true, from_preview: true }
+    const st = { ...settings.value, seeds: { prompt: seed }, from_preview: true }
     const j = await callRuby('jobs_start', { kind: 'final', scenes: [], sketches, mixins: activeMixins(), settings: st })
     if (j) finalJobs.value.push(j)
     startPoll('final')
@@ -494,7 +493,7 @@ async function finalAll() {
   const scenes = [...new Set(list.map((x) => x.scene))]
   for (const scene of scenes) {
     const seed = list.find((x) => x.scene === scene).seed
-    const st = { ...settings.value, seeds: { [scene]: seed }, seed_locked: true, from_preview: true }
+    const st = { ...settings.value, seeds: { [scene]: seed }, from_preview: true }
     const j = await callRuby('jobs_start', { kind: 'final', scenes: [scene], sketches, mixins: activeMixins(), settings: st })
     if (j) finalJobs.value.push(j)
   }
@@ -605,7 +604,6 @@ async function pollJob() {
     const first = previewJobs.value.find((j) => j.status === 'done' && j.results?.length)
     if (first && !previewJobs.value.some((j) => !['done', 'error', 'cancelled'].includes(j.status))) {
       settings.value.seed = first.results[0].seed
-      settings.value.seed_locked = true
       await saveSettings()
     }
   } else {

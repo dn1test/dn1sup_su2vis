@@ -1,7 +1,7 @@
 <template>
   <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full min-w-0">
     <div class="shrink-0 px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
-      <span class="font-medium">2 · Превью</span>
+      <span class="font-medium">Превью</span>
       <span class="flex items-center gap-2">
         <span v-if="job" class="text-xs px-2 py-0.5 rounded border"
           :class="job.status === 'done' ? 'bg-green-50 text-green-700' : job.status === 'cancelled' ? 'bg-slate-100 text-slate-600' : job.status === 'error' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'">

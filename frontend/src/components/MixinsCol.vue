@@ -2,11 +2,11 @@
   <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full">
     <div class="shrink-0 px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
       <span class="font-medium flex items-center gap-2">
-        3 · Примеси
         <label class="flex items-center gap-1 text-xs font-normal text-slate-500 cursor-pointer" title="Выключить колонку: генерация без примесей (только сцена/промпт)">
           <input type="checkbox" :checked="enabled" @change="emit('toggle-enabled', $event.target.checked)" />
           вкл
         </label>
+        Примеси
       </span>
       <span class="flex items-center gap-2">
         <span class="text-xs text-slate-500">{{ activeCount }}/{{ items.length }}</span>

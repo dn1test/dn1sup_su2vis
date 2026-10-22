@@ -23,7 +23,6 @@ module Dn1sup
       DEFAULTS = {
         'prompt' => 'Photorealistic render based on the provided sketch. Keep the exact same composition, geometry, proportions and scale of every object. Replace any silhouette scale figures with a real standing person in casual clothing (jeans, t-shirt) for human scale. Soft natural daylight, architectural photography, ultra-detailed, 8k, magazine quality. No watermarks, no logos, no text, no captions, no signatures, no letters, no words anywhere in the image. Clean editorial photograph without any overlay text.',
         'seed' => -1,
-        'seed_locked' => false,
         'sketch_preset' => '1024x768',
         'sketch_source' => 'hd',
         'sketch_thin_lines' => true,
@@ -277,7 +276,7 @@ module Dn1sup
         when 'guidance' then 1.0
         when 'memory_mode' then 'balanced'
         when 'seed' then value.to_i
-        when 'seed_locked', 'allow_oversized', 'use_scenes', 'use_mixins',
+        when 'allow_oversized', 'use_scenes', 'use_mixins',
              'sketch_thin_lines', 'sketch_hide_dims', 'sketch_autocrop', 'sketch_white_bg',
              'unsloth_autostart', 'geometry_lock', 'preview_random_seeds' then value == true || value.to_s == 'true'
         # Студия klein принимает только auto (поле не шлём): edit 400,

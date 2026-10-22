@@ -4,7 +4,7 @@
       <span class="font-medium flex items-center gap-2">
         <input type="checkbox" :checked="enabled" @change="$emit('toggle-enabled', $event.target.checked)"
           title="Выключить колонку: генерация без эскиза сцены (только примеси/промпт)" />
-        1 · Сцены
+        Сцены
       </span>
       <span class="flex items-center gap-2">
         <span class="text-xs text-slate-500">{{ selected.length }}/{{ scenes.length }}</span>
