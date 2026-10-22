@@ -75,11 +75,25 @@ module Dn1sup
         scenes = no_sketch ? [nil] : raw_scenes.map(&:to_i)
         url = s['unsloth_url'].to_s
         key = s['unsloth_key'].to_s
-        raise 'нет ключа Unsloth Studio (вкладка Настройки)' if key.empty?
+        raise 'нет ключа Unsloth Studio (окно Подключение в шапке)' if key.empty?
 
         Log.append('job_start', 'id' => job.id, 'kind' => job.kind, 'scenes' => scenes,
                    'seed' => s['seed'], 'preview' => s['preview_preset'], 'final' => s['final_mode'])
         Client.ensure_loaded!(url, key, s['unsloth_model'], s['unsloth_gguf'], s['memory_mode'])
+        # Апсемплер промпта поддерживает не каждая модель (напр. FLUX.2-klein:
+        # supports_prompt_upsampler=false) — при enhance=true студия отвечает
+        # HTTP 500. Глушим enhance для таких моделей, в лог — пометку.
+        enhance = s['enhance_prompt'] == true || s['enhance_prompt'].to_s == 'true'
+        begin
+          cap = Client.status(url, key)
+          if cap && !cap['supports_prompt_upsampler'] && enhance
+            enhance = false
+            Log.append('enhance_off', 'id' => job.id,
+                       'reason' => "модель #{cap['repo_id']} без апсемплера")
+          end
+        rescue StandardError
+          nil
+        end
 
         seed_base = s['seed'].to_i
         seed_base = Random.new_seed % 2_147_483_647 if seed_base < 0
@@ -152,7 +166,7 @@ module Dn1sup
             strength: gen_strength, seed: batch_seeds.first,
             allow_oversized: s['allow_oversized'] == true || s['allow_oversized'].to_s == 'true',
             batch_size: batch, seeds: batch_seeds,
-            enhance_prompt: s['enhance_prompt'],
+            enhance_prompt: enhance,
             upscale: up > 0 ? up : nil, workflow: wf,
             extra_references: mix_paths, mixins_prompt: mp
           )
