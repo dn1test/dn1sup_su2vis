@@ -257,14 +257,14 @@ module Dn1sup
         assert(content.include?('апсемплер'), 'panel.html без тумблера enhance — устаревшая сборка')
         assert(content.include?('scenes_sync_view'), 'panel.html без синхронизации вида — устаревшая сборка')
         assert(content.include?('Рендер'), 'panel.html без кнопки рендера — устаревшая сборка')
-        assert(content.include?('Финальный размер') || content.include?('Aspect ratio'), 'panel.html без настроек размера — устаревшая сборка')
+        assert(content.include?('Соотношение сторон') || content.include?('Aspect ratio'), 'panel.html без настроек размера — устаревшая сборка')
         assert(content.include?('Картинок за раз'), 'panel.html без выбора числа картинок — устаревшая сборка')
         assert(content.include?('final_view'), 'panel.html без просмотра финала — устаревшая сборка')
         assert(content.include?('enhance_preview'), 'panel.html без предпросмотра enhance — устаревшая сборка')
         assert(content.include?('select_out_dir'), 'panel.html без выбора папки — устаревшая сборка')
         assert(content.include?('project_init'), 'panel.html без создания su2vis/ — устаревшая сборка')
         assert(content.include?('Проверить снова'), 'panel.html без перепроверки проекта — устаревшая сборка')
-        assert(content.include?('Aspect ratio'), 'panel.html без выбора аспекта — устаревшая сборка')
+        assert(content.include?('Соотношение сторон'), 'panel.html без выбора аспекта — устаревшая сборка')
         assert(content.include?('Resolution'), 'panel.html без выбора разрешения — устаревшая сборка')
         assert(content.include?('Random if empty'), 'panel.html без seed-плейсхолдера — устаревшая сборка')
         assert(content.include?('Advanced'), 'panel.html без секции Advanced — устаревшая сборка')
@@ -336,6 +336,13 @@ module Dn1sup
         assert_equal(256, Settings.coerce('final_w', '4'), 'битые 4px из 0.17.0 лечатся в 256')
         assert_equal(2048, Settings.coerce('final_h', '9999'))
         assert_equal(2048, Settings.coerce('final_w', 2048))
+      end
+
+      test 'settings: final_mode только sketch/1k/2k/custom' do
+        assert_equal('sketch', Settings.coerce('final_mode', 'sketch'))
+        assert_equal('1k', Settings.coerce('final_mode', '1k'))
+        assert_equal('custom', Settings.coerce('final_mode', 'custom'))
+        assert_equal('sketch', Settings.coerce('final_mode', 'мусор'))
       end
 
       test 'client: scale_to_long тянет длинную к px' do

@@ -36,36 +36,41 @@
         <span class="text-xs"><span class="font-medium">Замок геометрии</span><br />
         <span class="text-slate-400">Запрет двигать стены/окна/двери и менять камеру.</span></span>
       </label>
-      <label class="block">
-        <span class="text-xs text-slate-500">Aspect ratio</span>
+      <div>
+        <span class="text-xs text-slate-500">Режим размера</span>
         <div class="mt-1 flex gap-1">
-          <select :value="aspectVal" @change="setAspect($event.target.value)"
-            class="flex-1 min-w-0 border rounded p-1.5 text-xs bg-white">
-            <option value="sketch">Размер эскиза</option>
-            <option value="1k">По длинной 1024 (1K)</option>
-            <option value="2k">По длинной 2048 (2K)</option>
-            <option value="1:1">Square (1:1)</option>
-            <option value="4:3">Landscape (4:3)</option>
-            <option value="3:4">Portrait (3:4)</option>
-            <option value="16:9">Wide (16:9)</option>
-            <option v-if="aspectVal === '__custom'" value="__custom" disabled>Свой размер…</option>
-          </select>
+          <button v-for="m in MODES" :key="m.id" @click="updSave('final_mode', m.id)"
+            class="flex-1 px-1 py-1 text-xs border rounded"
+            :class="modeVal === m.id ? 'bg-slate-900 text-white' : 'hover:bg-slate-100'"
+            :title="m.title">{{ m.label }}</button>
+        </div>
+      </div>
+      <label class="block" :class="modeVal !== 'custom' ? 'opacity-50' : ''">
+        <span class="text-xs text-slate-500">Соотношение сторон</span>
+        <select :value="ratioVal" @change="setRatio($event.target.value)" :disabled="modeVal !== 'custom'"
+          class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+          <option v-for="r in RATIOS" :key="r.id" :value="r.id">{{ r.label }}</option>
+          <option v-if="ratioVal === 'custom'" value="custom" disabled>Свои пропорции…</option>
+        </select>
+      </label>
+      <div :class="modeVal !== 'custom' ? 'opacity-50 pointer-events-none' : ''">
+        <span class="text-xs text-slate-500">Resolution</span>
+        <div class="text-xs text-slate-400">Размер в пикселях. Больше = детальнее, но жрёт VRAM; потолок студии 2048 по длинной. Вторая сторона подтягивается сама — пропорции сохраняются.</div>
+        <div class="mt-1 flex gap-1">
+          <div class="flex-1 min-w-0 grid grid-cols-2 gap-2">
+            <select :value="Number(modelValue.final_w)" @change="updSaveWH('final_w', +$event.target.value)"
+              class="w-full border rounded p-1.5 text-xs bg-white">
+              <option v-if="!RES_OPTIONS.includes(Number(modelValue.final_w))" :value="Number(modelValue.final_w)">↔ {{ Number(modelValue.final_w) }}</option>
+              <option v-for="px in RES_OPTIONS" :key="'w' + px" :value="px">↔ {{ px }}</option>
+            </select>
+            <select :value="Number(modelValue.final_h)" @change="updSaveWH('final_h', +$event.target.value)"
+              class="w-full border rounded p-1.5 text-xs bg-white">
+              <option v-if="!RES_OPTIONS.includes(Number(modelValue.final_h))" :value="Number(modelValue.final_h)">↕ {{ Number(modelValue.final_h) }}</option>
+              <option v-for="px in RES_OPTIONS" :key="'h' + px" :value="px">↕ {{ px }}</option>
+            </select>
+          </div>
           <button class="shrink-0 px-2 py-1 text-xs border rounded hover:bg-slate-100 bg-white"
             title="Поменять ширину и высоту местами" @click="swapWH">⇄</button>
-        </div>
-      </label>
-      <div>
-        <span class="text-xs text-slate-500">Resolution</span>
-        <div class="text-xs text-slate-400">Размер в пикселях. Больше = детальнее, но жрёт VRAM; потолок студии 2048 по длинной. Вторая сторона подтягивается сама — пропорции сохраняются (⇄ — перевернуть).</div>
-        <div class="mt-1 grid grid-cols-2 gap-2">
-          <select :value="Number(modelValue.final_w)" @change="updSaveWH('final_w', +$event.target.value)"
-            class="w-full border rounded p-1.5 text-xs bg-white">
-            <option v-for="px in RES_OPTIONS" :key="'w' + px" :value="px">↔ {{ px }}</option>
-          </select>
-          <select :value="Number(modelValue.final_h)" @change="updSaveWH('final_h', +$event.target.value)"
-            class="w-full border rounded p-1.5 text-xs bg-white">
-            <option v-for="px in RES_OPTIONS" :key="'h' + px" :value="px">↕ {{ px }}</option>
-          </select>
         </div>
       </div>
       <div>
@@ -158,7 +163,20 @@ import { computed } from 'vue'
 const props = defineProps({ modelValue: { type: Object, required: true }, enhancePreview: { type: Object, default: null } })
 const emit = defineEmits(['update:modelValue', 'save', 'enhance-preview', 'select-out-dir', 'open-out-dir'])
 const RES_OPTIONS = [256, 512, 768, 1024, 1280, 1536, 2048]
-const ASPECT_SIZES = { '1:1': [1024, 1024], '4:3': [1280, 960], '3:4': [960, 1280], '16:9': [1536, 864] }
+const MODES = [
+  { id: 'sketch', label: 'Эскиз', title: 'Точный размер эскиза сцены' },
+  { id: '1k', label: '1K', title: 'Пропорции эскиза, длинная сторона 1024' },
+  { id: '2k', label: '2K', title: 'Пропорции эскиза, длинная сторона 2048' },
+  { id: 'custom', label: 'Свой', title: 'Точный размер: соотношение + разрешение ниже' }
+]
+const RATIOS = [
+  { id: '1:1', label: 'Квадрат 1:1' },
+  { id: '4:3', label: 'Альбом 4:3' },
+  { id: '3:4', label: 'Портрет 3:4' },
+  { id: '16:9', label: 'Широкий 16:9' },
+  { id: '9:16', label: 'Портрет 9:16' }
+]
+const RATIO_VALS = { '1:1': 1, '4:3': 4 / 3, '3:4': 3 / 4, '16:9': 16 / 9, '9:16': 9 / 16 }
 function upd(key, value) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
 }
@@ -176,23 +194,35 @@ const stepsVal = computed(() => {
   return Math.min(30, Math.max(8, n))
 })
 const variantsVal = computed(() => Number(props.modelValue.preview_variants) || 1)
-const aspectVal = computed(() => {
-  const m = props.modelValue.final_mode
-  if (m === 'sketch' || m === '1k' || m === '2k') return m
-  if (m !== 'custom') return '__custom'
+const modeVal = computed(() => {
+  const m = String(props.modelValue.final_mode || 'sketch')
+  return ['sketch', '1k', '2k', 'custom'].includes(m) ? m : 'sketch'
+})
+const ratioVal = computed(() => {
   const w = Number(props.modelValue.final_w)
   const h = Number(props.modelValue.final_h)
-  for (const [k, [aw, ah]] of Object.entries(ASPECT_SIZES)) {
-    if (w === aw && h === ah) return k
+  if (w > 0 && h > 0) {
+    const r = w / h
+    for (const [id, v] of Object.entries(RATIO_VALS)) {
+      if (Math.abs(r - v) / v < 0.005) return id
+    }
   }
-  return '__custom'
+  return 'custom'
 })
-function setAspect(v) {
-  if (v === '__custom') return
-  if (v === 'sketch' || v === '1k' || v === '2k') { updSave('final_mode', v); return }
-  const [w, h] = ASPECT_SIZES[v]
+function setRatio(id) {
+  if (id === 'custom' || !RATIO_VALS[id]) return
+  const [a, b] = id.split(':').map(Number)
+  const curW = Number(props.modelValue.final_w) || 2048
+  const curH = Number(props.modelValue.final_h) || 1536
+  // Только пропорции: размер берём из текущей длинной стороны.
+  const L = Math.min(2048, Math.max(256, Math.max(curW, curH)))
+  let w, h
+  if (a >= b) { w = L; h = snap16(L * b / a) } else { h = L; w = snap16(L * a / b) }
   emit('update:modelValue', { ...props.modelValue, final_mode: 'custom', final_w: w, final_h: h })
   emit('save')
+}
+function snap16(x) {
+  return Math.min(2048, Math.max(256, Math.round(x / 16) * 16))
 }
 function updSaveWH(key, v) {
   const other = key === 'final_w' ? 'final_h' : 'final_w'

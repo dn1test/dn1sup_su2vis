@@ -327,6 +327,7 @@ module Dn1sup
           %w[both final].include?(s) ? s : 'both'
         when 'unsloth_cmd' then value.to_s.strip.empty? ? 'unsloth' : value.to_s.strip
         when 'sketch_source' then %w[hd view preset].include?(value.to_s) ? value.to_s : 'hd'
+        when 'final_mode' then %w[sketch 1k 2k custom].include?(value.to_s) ? value.to_s : 'sketch'
         when 'preview_size' then %w[min mid max].include?(value.to_s) ? value.to_s : 'mid'
         when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1024x768'
         when 'final_w', 'final_h' then value.to_i.clamp(256, 2048)
