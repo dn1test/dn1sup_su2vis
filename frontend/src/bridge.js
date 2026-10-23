@@ -59,16 +59,16 @@ const mockScenes = [
 
 const mockSettings = {
   prompt: 'Photorealistic render based on the provided sketch...',
-  seed: -1, preview_max: 768, final_mode: 'sketch',
-  strength: 1.0, steps: 4, guidance: 1.0, memory_mode: 'balanced',
+  seed: -1,
+  strength: 1.0, steps: 16, guidance: 1.0, memory_mode: 'balanced',
   allow_oversized: true, suffix: '_photorealistic', ext: 'jpg',
   unsloth_url: 'http://127.0.0.1:8888', unsloth_key: '',
   unsloth_autostart: true, unsloth_cmd: 'unsloth',
   unsloth_model: 'unsloth/flux-3-image-klein-GGUF',
   unsloth_gguf: 'flux-3-image-klein-UD-Q4_K_XL.gguf',
   sketch_preset: '1024x768', sketch_source: 'hd', sketch_thin_lines: true, sketch_hide_dims: true, sketch_autocrop: false,
-  preview_preset: '256', preview_variants: 1,
-  final_strength: 0.4, out_dir: '',
+  preview_variants: 1, preview_random_seeds: true,
+  out_dir: '',
   project_state: 'global', project_dir: '', model_name: '',
   final_mode: 'sketch', final_w: 2048, final_h: 1536,
   name_template: '{scene}{suffix}_{date}',
@@ -87,23 +87,22 @@ function mockCall(action, payload) {
     case 'scenes_sync_view': return { index: payload?.index ?? 0, ok: true, thumb: null }
     case 'scenes_capture': return { ok: true, sketches: {} }
     case 'scenes_shot': return { index: payload?.index ?? 0, img: null }
-    case 'jobs_start': return { id: 'mock', kind: payload?.kind || 'preview', status: 'done', progress: { done: 1, total: 1 }, results: [], error: null, params: payload }
+    case 'jobs_start': return { id: 'mock', kind: payload?.kind || 'final', status: 'done', progress: { done: 1, total: 1 }, results: [], error: null, params: payload }
     case 'jobs_poll': return { id: payload?.id, status: 'done', progress: {}, results: [], error: null }
     case 'jobs_cancel': return { ok: true, id: payload?.id }
     case 'jobs_log': return []
     case 'gallery_list': return []
     case 'gallery_delete': return { ok: true }
     case 'mixins_list': return []
-    case 'mixins_add_data': return { ok: true, entry: { id: 'mock-mix.png', file: 'mock-mix.png', name: payload?.name || 'mock', caption: '', caption_neg: '', role: 'auto', weight: 1, apply_to: 'both', active: true, data_url: payload?.data_url } }
-    case 'mixins_add_path': return { ok: true, entry: { id: 'mock-mix.png', file: 'mock-mix.png', name: 'mock', caption: '', caption_neg: '', role: 'auto', weight: 1, apply_to: 'both', active: true } }
-    case 'mixins_update': return { ok: true, entry: { id: payload?.id, caption: payload?.caption || '', caption_neg: payload?.caption_neg || '', role: payload?.role || 'auto', weight: payload?.weight || 1, apply_to: payload?.apply_to || 'both', active: payload?.active, crop: payload?.crop || null, rotation: payload?.rotation || 0 } }
+    case 'mixins_add_data': return { ok: true, entry: { id: 'mock-mix.png', file: 'mock-mix.png', name: payload?.name || 'mock', caption: '', caption_neg: '', role: 'auto', weight: 1, apply_to: 'final', active: true, data_url: payload?.data_url } }
+    case 'mixins_add_path': return { ok: true, entry: { id: 'mock-mix.png', file: 'mock-mix.png', name: 'mock', caption: '', caption_neg: '', role: 'auto', weight: 1, apply_to: 'final', active: true } }
+    case 'mixins_update': return { ok: true, entry: { id: payload?.id, caption: payload?.caption || '', caption_neg: payload?.caption_neg || '', role: payload?.role || 'auto', weight: payload?.weight || 1, apply_to: 'final', active: payload?.active, crop: payload?.crop || null, rotation: payload?.rotation || 0 } }
     case 'mixins_reorder': return { ok: true }
     case 'mixins_delete': return { ok: true }
     case 'mixins_view': return { ok: true, data_url: null }
     case 'enhance_preview': return { ok: true, task: { id: 'mock-enh', status: 'done', text: 'mock: вне SketchUp — здесь будет текст апсемплера', error: null } }
     case 'enhance_poll': return { ok: true, task: { id: payload?.id || 'mock-enh', status: 'done', text: 'mock: вне SketchUp — здесь будет текст апсемплера', error: null } }
     case 'select_out_dir': return { ok: true, settings: { ...mockSettings, out_dir: 'mock-out' } }
-    case 'preview_save': return { ok: true, path: 'mock-prev.png' }
     case 'gen_progress': return { active: false }
     case 'jobs_list': return []
     case 'studio_status': return { ok: false, error: 'mock: вне SketchUp' }
@@ -114,10 +113,10 @@ function mockCall(action, payload) {
       models: [
         { id: mockSettings.unsloth_model, loaded: true, task: 'text-to-image', quant: 'UD-Q4_K_XL', display_name: 'flux-3-image-klein-GGUF',
           gguf_file: 'flux-3-image-klein-UD-Q4_K_XL.gguf',
-          preset: { steps: 4, guidance: 1.0, workflow: 'auto', memory_mode: 'balanced', max_side: 2048, label: 'klein (distilled)', vram: '≈13–16 ГБ', source: 'пресет klein (distilled)' } },
+          preset: { steps: 16, guidance: 1.0, workflow: 'auto', memory_mode: 'balanced', max_side: 2048, label: 'klein', vram: '≈13–16 ГБ', source: 'пресет klein' } },
         { id: 'unsloth/FLUX.2-klein-9B-GGUF', loaded: false, task: 'text-to-image', quant: 'Q8_0', display_name: 'FLUX.2-klein-9B-GGUF',
           gguf_file: 'flux-2-klein-9b-Q8_0.gguf',
-          preset: { steps: 4, guidance: 1.0, workflow: 'auto', memory_mode: 'balanced', max_side: 2048, label: 'klein (distilled)', vram: '≈13–16 ГБ', source: 'пресет klein (distilled)' } }
+          preset: { steps: 16, guidance: 1.0, workflow: 'auto', memory_mode: 'balanced', max_side: 2048, label: 'klein', vram: '≈13–16 ГБ', source: 'пресет klein' } }
       ],
       status: { repo_id: mockSettings.unsloth_model, gguf_filename: mockSettings.unsloth_gguf, loaded: true, workflows: ['reference'],
         family: 'flux.3-klein', supports_prompt_upsampler: true, supports_lora: false, supports_controlnet: false,

@@ -10,7 +10,7 @@ end
 
 module Dn1sup
   module Su2vis
-    VERSION = '0.15.0'.freeze
+    VERSION = '0.16.0'.freeze
 
     ID       = 'dn1sup_su2vis'.freeze
     REPO     = 'dn1test/dn1sup_su2vis'.freeze

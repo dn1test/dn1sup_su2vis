@@ -254,7 +254,7 @@ module Dn1sup
           dlg.add_action_callback('jobs_start') do |_ctx, req_id, params|
             data = parse_payload(params)
             scenes = Array(data['scenes']).reject { |v| v.nil? || v.to_s.empty? }.map(&:to_i)
-            job = Jobs.enqueue(data['kind'] || 'preview', scenes,
+            job = Jobs.enqueue(data['kind'] || 'final', scenes,
                                (data['settings'] || {}).merge('out_dir' => Settings.out_dir))
             job_obj = Jobs.find(job[:id])
             job_obj.params['sketches'] = data['sketches'] if data['sketches'].is_a?(Hash)
@@ -280,8 +280,8 @@ module Dn1sup
           dlg.add_action_callback('jobs_log_clear') do |_ctx, req_id|
             push_event('result', id: req_id, payload: { ok: Log.clear })
           end
-          # Галерея на диске: что лежит в папке пользователя (превью+финалы
-          # с сайдкарами параметров). Удаление — только по кнопке на картинке.
+          # Галерея на диске: финалы с сайдкарами параметров.
+          # Удаление — только по кнопке на картинке.
           dlg.add_action_callback('gallery_list') do |_ctx, req_id|
             begin
               push_event('result', id: req_id, payload: Gallery.list(Settings.out_dir))
@@ -331,25 +331,6 @@ module Dn1sup
               push_event('result', id: req_id, payload: { ok: true, task: Enhance.poll(data['id'].to_s) })
             rescue Exception => e # rubocop:disable Lint/RescueException
               push_event('result', id: req_id, payload: { ok: false, error: e.message.to_s })
-            end
-          end
-          # Байты превью из панели — во временный файл для финала:
-          # финал дорабатывает именно эту картинку, а не переснимает сцену.
-          dlg.add_action_callback('preview_save') do |_ctx, req_id, params|
-            data = parse_payload(params)
-            begin
-              url = data['data_url'].to_s
-              m = url.match(%r{\Adata:image/(png|jpeg);base64,(.+)\z}m)
-              raise 'нет картинки превью' if m.nil?
-              raw = Base64.strict_decode64(m[2])
-              raise 'пустая картинка' if raw.empty?
-              require 'fileutils'
-              FileUtils.mkdir_p(Scenes.tmp_dir)
-              path = File.join(Scenes.tmp_dir, "prev_#{data['scene'].to_i}_#{data['seed'].to_i}.png")
-              File.binwrite(path, raw)
-              push_event('result', id: req_id, payload: { ok: true, path: path })
-            rescue StandardError => e
-              push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end
           end
           dlg.add_action_callback('gen_progress') do |_ctx, req_id|
@@ -419,7 +400,7 @@ module Dn1sup
                           'current_gguf' => current }]
               push_event('result', id: req_id,
                          payload: { ok: true, models: models, status: st,
-                                    studio_defaults: { 'steps' => 4, 'guidance' => 1.0 } })
+                                    studio_defaults: { 'steps' => 16, 'guidance' => 1.0 } })
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end

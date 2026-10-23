@@ -23,17 +23,14 @@ module Dn1sup
       DEFAULTS = {
         'prompt' => 'Photorealistic render based on the provided sketch. Keep the exact same composition, geometry, proportions and scale of every object. Replace any silhouette scale figures with a real standing person in casual clothing (jeans, t-shirt) for human scale. Soft natural daylight, architectural photography, ultra-detailed, 8k, magazine quality. No watermarks, no logos, no text, no captions, no signatures, no letters, no words anywhere in the image. Clean editorial photograph without any overlay text.',
         'seed' => -1,
-        'runs' => 1,
         'sketch_preset' => '1024x768',
         'sketch_source' => 'hd',
         'sketch_thin_lines' => true,
         'sketch_hide_dims' => true,
         'sketch_autocrop' => false,
         'sketch_white_bg' => false,
-        'preview_preset' => '256',
         'preview_variants' => 1,
-        'preview_max' => 256,
-        'final_strength' => 0.4,
+        'preview_random_seeds' => true,
         'final_mode' => 'sketch',
         'final_w' => 2048,
         'final_h' => 1536,
@@ -41,7 +38,7 @@ module Dn1sup
         'geometry_lock' => true,
         'name_template' => '{scene}{suffix}_{date}',
         'strength' => 1.0,
-        'steps' => 4,
+        'steps' => 16,
         'guidance' => 1.0,
         'memory_mode' => 'balanced',
         'studio_precision' => 'auto',
@@ -57,7 +54,6 @@ module Dn1sup
         'use_mixins' => true,
         'mixins_default_role' => 'auto',
         'mixins_default_apply' => 'both',
-        'preview_random_seeds' => true,
         'suffix' => '_photorealistic',
         'ext' => 'jpg',
         'unsloth_url' => 'http://127.0.0.1:8888',
@@ -140,7 +136,7 @@ module Dn1sup
       def force_klein!(h)
         h['unsloth_model'] = KLEIN_MODEL
         h['unsloth_gguf'] = KLEIN_GGUF if h['unsloth_gguf'].to_s.empty?
-        h['steps'] = 4
+        h['steps'] = coerce('steps', h['steps'])
         h['guidance'] = 1.0
         h['workflow'] = coerce('workflow', h['workflow'])
         h['memory_mode'] = coerce('memory_mode', h['memory_mode'])
@@ -290,9 +286,8 @@ module Dn1sup
         case key.to_s
         when 'unsloth_model' then KLEIN_MODEL
         when 'unsloth_gguf' then value.to_s.empty? ? KLEIN_GGUF : value.to_s
-        when 'steps' then 4
+        when 'steps' then value.to_i.clamp(8, 30)
         when 'guidance' then 1.0
-        when 'runs' then value.to_i.clamp(1, 4)
         when 'memory_mode'
           s = value.to_s.strip.downcase
           %w[auto fast balanced low_vram].include?(s) ? s : 'balanced'
@@ -327,12 +322,14 @@ module Dn1sup
           %w[auto style material light object].include?(s) ? s : 'auto'
         when 'mixins_default_apply'
           s = value.to_s.strip.downcase
-          %w[both preview final].include?(s) ? s : 'both'
+          s = 'final' if s == 'preview'
+          %w[both final].include?(s) ? s : 'both'
         when 'unsloth_cmd' then value.to_s.strip.empty? ? 'unsloth' : value.to_s.strip
         when 'sketch_source' then %w[hd view preset].include?(value.to_s) ? value.to_s : 'hd'
         when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1024x768'
-        when 'preview_max', 'final_w', 'final_h', 'preview_variants' then value.to_i
+        when 'final_w', 'final_h', 'preview_variants' then value.to_i.clamp(1, 4)
         when 'strength', 'final_strength' then value.to_f
+        when 'runs', 'preview_preset', 'preview_max' then value.to_i
         else value.to_s
         end
       end

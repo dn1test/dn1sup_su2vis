@@ -43,7 +43,7 @@ module Dn1sup
         assert(Jobs.respond_to?(:pump_start), 'нет Jobs.pump_start')
         assert(Gallery.respond_to?(:list), 'нет Gallery.list')
         assert(Gallery.respond_to?(:remove), 'нет Gallery.remove')
-        assert(Gallery.respond_to?(:save_preview), 'нет Gallery.save_preview')
+        assert(Gallery.respond_to?(:save_sidecar), 'нет Gallery.save_sidecar')
         assert(Mixins.respond_to?(:list), 'нет Mixins.list')
         assert(Mixins.respond_to?(:add_data), 'нет Mixins.add_data')
         assert(Mixins.respond_to?(:add_path), 'нет Mixins.add_path')
@@ -141,7 +141,7 @@ module Dn1sup
 
       test 'настройки читаются без записи (read-only)' do
         h = Settings.all
-        %w[prompt seed sketch_preset preview_preset preview_variants final_mode final_w final_h final_strength workflow name_template strength steps unsloth_url version].each do |k|
+        %w[prompt seed sketch_preset preview_variants final_mode final_w final_h workflow name_template strength steps unsloth_url version].each do |k|
           assert(h.key?(k), "нет ключа #{k}")
         end
         assert_equal(VERSION, h['version'])
@@ -224,7 +224,7 @@ module Dn1sup
         assert_equal({ 'a' => 1 }, Panel.parse_payload('{"a":1}'))
         assert_equal({}, Panel.parse_payload('битая { json'))
         assert_equal({}, Panel.parse_payload(nil))
-        assert_equal({ 'kind' => 'preview' }, Panel.parse_payload('kind' => 'preview'))
+        assert_equal({ 'kind' => 'final' }, Panel.parse_payload('kind' => 'final'))
       end
 
       test 'final_view: чужой и несуществующий путь отклоняются' do
@@ -243,7 +243,7 @@ module Dn1sup
         end
       end
 
-      test 'панель: resources/panel.html собран из Vue (4 колонки)' do
+      test 'панель: resources/panel.html собран из Vue (3 колонки)' do
         html = File.join(__dir__, '..', 'resources', 'panel.html')
         assert(File.file?(html), "нет собранной панели #{html}")
         content = File.read(html, encoding: 'UTF-8')
@@ -256,41 +256,37 @@ module Dn1sup
         assert(content.include?('Журнал'), 'panel.html без вкладки журнала — устаревшая сборка')
         assert(content.include?('апсемплер'), 'panel.html без тумблера enhance — устаревшая сборка')
         assert(content.include?('scenes_sync_view'), 'panel.html без синхронизации вида — устаревшая сборка')
-        assert(content.include?('В финал'), 'panel.html без кнопки финала — устаревшая сборка')
-        assert(content.include?('Финальный размер'), 'panel.html без настроек финала — устаревшая сборка')
-        assert(content.include?('Вариантов'), 'panel.html без выбора числа вариантов — устаревшая сборка')
+        assert(content.include?('Рендер'), 'panel.html без кнопки рендера — устаревшая сборка')
+        assert(content.include?('Финальный размер') || content.include?('Aspect ratio'), 'panel.html без настроек размера — устаревшая сборка')
+        assert(content.include?('Картинок за раз'), 'panel.html без выбора числа картинок — устаревшая сборка')
         assert(content.include?('final_view'), 'panel.html без просмотра финала — устаревшая сборка')
         assert(content.include?('enhance_preview'), 'panel.html без предпросмотра enhance — устаревшая сборка')
-        assert(content.include?('Предпросмотр Enhance'), 'panel.html без блока предпросмотра — устаревшая сборка')
         assert(content.include?('select_out_dir'), 'panel.html без выбора папки — устаревшая сборка')
         assert(content.include?('project_init'), 'panel.html без создания su2vis/ — устаревшая сборка')
         assert(content.include?('Проверить снова'), 'panel.html без перепроверки проекта — устаревшая сборка')
         assert(content.include?('Aspect ratio'), 'panel.html без выбора аспекта — устаревшая сборка')
         assert(content.include?('Resolution'), 'panel.html без выбора разрешения — устаревшая сборка')
-        assert(content.include?('Batch size'), 'panel.html без batch size — устаревшая сборка')
         assert(content.include?('Random if empty'), 'panel.html без seed-плейсхолдера — устаревшая сборка')
         assert(content.include?('Advanced'), 'panel.html без секции Advanced — устаревшая сборка')
         assert(content.include?('project_delete'), 'panel.html без удаления su2vis/ — устаревшая сборка')
         assert(content.include?('Повторить'), 'panel.html без повтора загрузки картинки — устаревшая сборка')
         assert(content.include?('load_error'), 'panel.html без видимой ошибки загрузки — устаревшая сборка')
         assert(content.include?('Папка для рендеров'), 'panel.html без поля папки — устаревшая сборка')
-        assert(content.include?('Выбрать…'), 'panel.html без кнопки выбора папки — устаревшая сборка')
         assert(content.include?('загружаю…'), 'panel.html без тумб финала — устаревшая сборка')
         assert(content.include?('overflow-y-auto'), 'panel.html без прокрутки контента — устаревшая сборка')
         assert(content.include?('flex-col'), 'panel.html без колоночной раскладки — устаревшая сборка')
         assert(content.include?('scroll-slim'), 'panel.html без скрытых скроллбаров — устаревшая сборка')
-        assert(content.include?('preview_save'), 'panel.html без сохранения превью для финала — устаревшая сборка')
-        assert(content.include?('Доработка финала') || content.include?('final_strength'), 'panel.html без силы финала — устаревшая сборка')
-        assert(content.include?('select-preview'), 'panel.html без выбора превью — устаревшая сборка')
+        assert(!content.include?('preview_save'), 'panel.html с легаси сохранением превью — устаревшая сборка')
+        assert(!content.include?('select-preview'), 'panel.html с легаси выбором превью — устаревшая сборка')
+        assert(!content.include?('В финал'), 'panel.html с легаси кнопкой в финал — устаревшая сборка')
         assert(content.include?('gallery_list'), 'panel.html без чтения галереи — устаревшая сборка')
         assert(content.include?('gallery_delete'), 'panel.html без удаления файлов — устаревшая сборка')
         assert(content.include?('mixins_list'), 'panel.html без списка примесей — устаревшая сборка')
         assert(content.include?('mixins_add_data'), 'panel.html без добавления примесей — устаревшая сборка')
         assert(content.include?('mixins_update'), 'panel.html без подписей примесей — устаревшая сборка')
-        assert(content.include?('Примеси'), 'panel.html без колонки примесей — устаревшая сборка')
+        assert(content.include?('Примеси'), 'panel.html без примесей — устаревшая сборка')
         assert(content.include?('Удалить файл'), 'panel.html без иконки удаления — устаревшая сборка')
         assert(content.include?('Выделить / повернуть'), 'panel.html без редактора выделения — устаревшая сборка')
-        assert(content.include?('Только выделение'), 'panel.html без тумблера выделения — устаревшая сборка')
         assert(content.include?('Квантование GGUF'), 'panel.html без выбора квантования klein — устаревшая сборка')
         assert(content.include?('Эскиз-референс'), 'panel.html без настроек эскиза-референса — устаревшая сборка')
         assert(content.include?('скрыть размеры'), 'panel.html без тумблера размеров — устаревшая сборка')
@@ -299,10 +295,9 @@ module Dn1sup
         assert(content.include?('только по промпту'), 'panel.html без режима только-промпт — устаревшая сборка')
         assert(content.include?('Показать оригинал'), 'panel.html без просмотра оригинала — устаревшая сборка')
         assert(content.include?('type="radio"') || content.include?('su2vis-scene'), 'panel.html без radio выбора одной сцены — устаревшая сборка')
-        assert(content.include?('Для новых примесей'), 'panel.html без дефолтов примесей в 3-й колонке — устаревшая сборка')
-        assert(content.include?('360px'), 'panel.html без фиксированной ширины превью 360px — устаревшая сборка')
+        assert(content.include?('Что брать по умолчанию') || content.include?('Для новых примесей'), 'panel.html без дефолтов примесей — устаревшая сборка')
         assert(content.include?('Случайные сиды'), 'panel.html без тумблера случайных сидов — устаревшая сборка')
-        assert(content.include?('Runs'), 'panel.html без повторов Runs — устаревшая сборка')
+        assert(content.include?('Шаги'), 'panel.html без слайдера шагов — устаревшая сборка')
         assert(content.include?('Precision'), 'panel.html без точности Precision — устаревшая сборка')
         assert(content.include?('Text encoder precision'), 'panel.html без точности текст-энкодера — устаревшая сборка')
         assert(content.include?('Attention'), 'panel.html без выбора attention — устаревшая сборка')
@@ -321,7 +316,7 @@ module Dn1sup
         assert_equal([1024, 768], Jobs.final_size({ 'final_mode' => 'custom', 'final_w' => 1024, 'final_h' => 768 }, 1920, 1080))
       end
 
-      test 'jobs: preview_px 128/256/512/768, мусор — 256' do
+      test 'jobs: LEGACY preview_px (совместимость)' do
         assert_equal(128, Settings.preview_px('128'))
         assert_equal(256, Settings.preview_px('256'))
         assert_equal(512, Settings.preview_px(512))
@@ -330,7 +325,7 @@ module Dn1sup
         assert_equal(256, Settings.preview_px(nil))
       end
 
-      test 'jobs: preview_variants приводится к числу' do
+      test 'jobs: batch variants приводится к числу' do
         assert_equal(3, Settings.coerce('preview_variants', '3'))
         assert_equal(1, Settings.coerce('preview_variants', nil).to_i.clamp(1, 4))
       end
@@ -359,9 +354,12 @@ module Dn1sup
         assert_equal(256, w2, "портрет держит ширину 256: #{[w2, h2].inspect}")
       end
 
-      test 'settings: final_strength по умолчанию 0.4' do
-        assert_equal(0.4, Settings.coerce('final_strength', '0.4'))
-        assert(Settings.all.key?('final_strength'), 'нет ключа final_strength')
+      test 'settings: steps по умолчанию 16, диапазон 8..30' do
+        assert_equal(16, Settings::DEFAULTS['steps'])
+        assert_equal(8, Settings.coerce('steps', 2))
+        assert_equal(30, Settings.coerce('steps', 99))
+        assert_equal(20, Settings.coerce('steps', 20))
+        assert(Settings.all.key?('steps'), 'нет ключа steps')
       end
 
       test 'client: norm_strength не даёт 0 (API требует > 0)' do
@@ -385,15 +383,15 @@ module Dn1sup
         assert(Client::KLEIN_WORKFLOW.nil?, 'KLEIN_WORKFLOW должен быть nil')
       end
 
-      test 'client: preset_for всегда klein 4/1.0 (другие модели не поддерживаются)' do
+      test 'client: preset_for всегда klein 16/1.0 (другие модели не поддерживаются)' do
         klein = Client.preset_for('unsloth/flux-3-image-klein-GGUF')
-        assert_equal(4, klein['steps'], "klein steps: #{klein.inspect}")
+        assert_equal(16, klein['steps'], "klein steps: #{klein.inspect}")
         assert_equal(1.0, klein['guidance'], "klein guidance: #{klein.inspect}")
         assert_equal('balanced', klein['memory_mode'], "klein memory: #{klein.inspect}")
         assert_equal(2048, klein['max_side'], "klein max_side: #{klein.inspect}")
         # даже чужой id даёт klein — выбор моделей убран
         other = Client.preset_for('Qwen-Image-GGUF', { 'steps' => 50, 'guidance' => 4.0 })
-        assert_equal(4, other['steps'], "чужой id всё равно klein: #{other.inspect}")
+        assert_equal(16, other['steps'], "чужой id всё равно klein: #{other.inspect}")
         assert_equal(1.0, other['guidance'], "чужой id всё равно klein: #{other.inspect}")
         assert_equal(Client::KLEIN_REPO, 'unsloth/flux-3-image-klein-GGUF')
         assert_equal(Client::KLEIN_GGUF, 'flux-3-image-klein-UD-Q4_K_XL.gguf')
@@ -405,7 +403,7 @@ module Dn1sup
         # квант внутри klein-репо сохраняется (Q8_0 уже скачан в студии)
         assert_equal('flux-3-image-klein-Q8_0.gguf', Settings.coerce('unsloth_gguf', 'flux-3-image-klein-Q8_0.gguf'))
         assert_equal('flux-3-image-klein-Q6_K.gguf', Settings.coerce('unsloth_gguf', 'flux-3-image-klein-Q6_K.gguf'))
-        assert_equal(4, Settings.coerce('steps', 50))
+        assert_equal(30, Settings.coerce('steps', 50))
         assert_equal(1.0, Settings.coerce('guidance', 7.0))
         assert_equal('auto', Settings.coerce('workflow', 'manual'))
         assert_equal('auto', Settings.coerce('workflow', 'EDIT'))
@@ -431,23 +429,24 @@ module Dn1sup
         assert_equal('', Client.pick_variant([], 'Q8_0'))
       end
 
-      test 'gallery: превью сохраняется с сайдкаром параметров' do
+      test 'gallery: финал сохраняется с сайдкаром параметров' do
         Dir.mktmpdir do |d|
-          f = Gallery.save_preview(d, "\x89PNG\r\n\x1A\n".b + 'x' * 16,
-                                   { 'scene' => 0, 'seed' => 7, 'variant' => 1,
-                                     'width' => 336, 'height' => 256, 'prompt' => 'p',
-                                     'steps' => 4 })
-          assert(File.file?(f), 'картинка не записана')
+          f = File.join(d, 'render_s0_seed7.jpg')
+          File.binwrite(f, "\xFF\xD8\xFF".b + 'x' * 16)
+          Gallery.save_sidecar(f, 'final',
+                               { 'scene' => 0, 'seed' => 7, 'variant' => 1,
+                                 'width' => 1024, 'height' => 768, 'prompt' => 'p',
+                                 'steps' => 16 })
           sp = "#{f}.json"
           assert(File.file?(sp), 'сайдкар не записан')
           m = JSON.parse(File.read(sp, encoding: 'UTF-8'))
-          assert_equal('preview', m['kind'], 'вид в сайдкаре')
+          assert_equal('final', m['kind'], 'вид в сайдкаре')
           assert_equal(7, m['seed'], 'seed в сайдкаре')
           assert_equal('p', m['prompt'], 'промпт в сайдкаре')
           list = Gallery.list(d)
           assert_equal(1, list.size, "список: #{list.inspect}")
           e = list.first
-          assert_equal('preview', e['kind'], 'вид в списке')
+          assert_equal('final', e['kind'], 'вид в списке')
           assert_equal(0, e['scene'], 'сцена в списке')
           r = Gallery.remove(d, f)
           assert(r[:ok], 'remove не ok')
@@ -471,15 +470,15 @@ module Dn1sup
         end
       end
 
-      test 'jobs: финал из превью тянется вверх до режима' do
+      test 'jobs: целевая длинная сторона по режиму' do
         assert_equal(1600, Jobs.final_long_side('sketch'))
         assert_equal(1024, Jobs.final_long_side('1k'))
         assert_equal(2048, Jobs.final_long_side('2k'))
         assert(Jobs.final_long_side('custom').nil?, 'custom считается отдельно')
         w, h = Client.scale_to_long(368, 256, Jobs.final_long_side('1k'))
-        assert(w == 1024 && h >= 256, "1K из превью: #{[w, h].inspect}")
+        assert(w == 1024 && h >= 256, "1K: #{[w, h].inspect}")
         w, h = Client.scale_to_long(368, 256, Jobs.final_long_side('2k'))
-        assert(w == 2048 && h >= 256, "2K из превью: #{[w, h].inspect}")
+        assert(w == 2048 && h >= 256, "2K: #{[w, h].inspect}")
       end
 
       test 'jobs: cancel несуществующей задачи — вежливый отказ' do
@@ -538,7 +537,7 @@ module Dn1sup
         Dir.mktmpdir do |d|
           Log.path_override = File.join(d, 't.log')
           begin
-            Log.append('job_start', 'id' => 'j1', 'kind' => 'preview')
+            Log.append('job_start', 'id' => 'j1', 'kind' => 'final')
             Log.append('job_done', 'id' => 'j1', 'status' => 'done', 'total_s' => 1.5)
             all = Log.tail(50)
             assert_equal(2, all.size, 'две записи')
@@ -847,15 +846,13 @@ module Dn1sup
         assert_equal([1024, 1024], Jobs.default_dims({ 'final_w' => 0, 'final_h' => 0 }), 'мусор — квадрат')
       end
 
-      test 'gallery: превью без сцены пишется с тегом prompt' do
+      test 'gallery: старые preview_ файлы игнорируются' do
         Dir.mktmpdir do |d|
-          f = Gallery.save_preview(d, "\x89PNG\r\n\x1A\n".b + 'x' * 16,
-                                   { 'scene' => nil, 'seed' => 7, 'variant' => 0,
-                                     'width' => 256, 'height' => 256 })
-          assert(File.file?(f), 'картинка не записана')
-          assert(File.basename(f).start_with?('preview_prompt_'), "тег prompt потерян: #{f.inspect}")
-          m = JSON.parse(File.read("#{f}.json", encoding: 'UTF-8'))
-          assert(m['scene'].nil?, 'сцена в сайдкаре должна быть nil')
+          File.binwrite(File.join(d, 'preview_s0_seed7.png'), "\x89PNG\r\n\x1A\n".b + 'x' * 16)
+          File.binwrite(File.join(d, 'render.jpg'), "\xFF\xD8\xFF".b + 'x' * 16)
+          list = Gallery.list(d)
+          assert_equal(1, list.size, "список: #{list.inspect}")
+          assert_equal('final', list.first['kind'], 'вид в списке')
         end
       end
 
@@ -1072,7 +1069,7 @@ module Dn1sup
         assert(Settings::PROJECT_KEYS.include?('mixins_default_apply'), 'mixins_default_apply должен быть per-file')
         assert_equal('material', Settings.coerce('mixins_default_role', 'material'))
         assert_equal('auto', Settings.coerce('mixins_default_role', 'мусор'))
-        assert_equal('preview', Settings.coerce('mixins_default_apply', 'preview'))
+        assert_equal('final', Settings.coerce('mixins_default_apply', 'preview'))
         assert_equal('final', Settings.coerce('mixins_default_apply', 'FINAL'))
         assert_equal('both', Settings.coerce('mixins_default_apply', 'мусор'))
       end
@@ -1081,7 +1078,7 @@ module Dn1sup
         old_role = Settings.get('mixins_default_role')
         old_apply = Settings.get('mixins_default_apply')
         begin
-          Settings.save({ 'mixins_default_role' => 'material', 'mixins_default_apply' => 'preview' })
+          Settings.save({ 'mixins_default_role' => 'material', 'mixins_default_apply' => 'final' })
           Dir.mktmpdir do |d|
             out = File.join(d, 'out')
             raw = "\x89PNG\r\n\x1A\n".b + 'x' * 16
@@ -1089,18 +1086,18 @@ module Dn1sup
             url = "data:image/png;base64,#{Base64.strict_encode64(raw)}"
             e = Mixins.add_data(url, 'тест.png', out)
             assert_equal('material', e['role'], 'роль не из настроек колонки')
-            assert_equal('preview', e['apply_to'], 'учёт не из настроек колонки')
+            assert_equal('final', e['apply_to'], 'учёт не из настроек колонки')
             list = Mixins.list(out)
             assert_equal(1, list.size, "список: #{list.inspect}")
             assert_equal('material', list.first['role'], 'роль не в списке')
-            assert_equal('preview', list.first['apply_to'], 'учёт не в списке')
+            assert_equal('final', list.first['apply_to'], 'учёт не в списке')
           end
         ensure
           Settings.save({ 'mixins_default_role' => old_role, 'mixins_default_apply' => old_apply })
         end
       end
 
-      test 'превью: случайные сиды батча, не по порядку' do
+      test 'рендер: случайные сиды батча, не по порядку' do
         assert_equal(true, Settings::DEFAULTS['preview_random_seeds'], 'дефолт — случайные')
         assert(Settings::PROJECT_KEYS.include?('preview_random_seeds'), 'preview_random_seeds должен быть per-file')
         assert_equal(false, Settings.coerce('preview_random_seeds', false))
@@ -1123,13 +1120,13 @@ module Dn1sup
         assert(content.include?('enhance_poll'), 'panel.html без опроса enhance — устаревшая сборка')
       end
 
-      test 'runs: дефолт 1, coerce 1..4' do
-        assert_equal(1, Settings::DEFAULTS['runs'])
-        assert(Settings::PROJECT_KEYS.include?('runs'), 'runs должен быть per-file')
-        assert_equal(1, Settings.coerce('runs', 0))
-        assert_equal(1, Settings.coerce('runs', nil))
-        assert_equal(4, Settings.coerce('runs', 99))
-        assert_equal(2, Settings.coerce('runs', 2))
+      test 'steps: дефолт 16, coerce 8..30' do
+        assert_equal(16, Settings::DEFAULTS['steps'])
+        assert(Settings::PROJECT_KEYS.include?('steps'), 'steps должен быть per-file')
+        assert_equal(8, Settings.coerce('steps', 0))
+        assert_equal(8, Settings.coerce('steps', nil))
+        assert_equal(30, Settings.coerce('steps', 99))
+        assert_equal(20, Settings.coerce('steps', 20))
       end
 
       test 'advanced load-time: дефолты и coerce' do

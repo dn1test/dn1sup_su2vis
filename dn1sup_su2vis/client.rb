@@ -67,7 +67,9 @@ module Dn1sup
       # Выбор других моделей убран: константы — единый источник истины.
       KLEIN_REPO = 'unsloth/flux-3-image-klein-GGUF'.freeze
       KLEIN_GGUF = 'flux-3-image-klein-UD-Q4_K_XL.gguf'.freeze
-      KLEIN_STEPS = 4
+      KLEIN_STEPS_DEFAULT = 16
+      STEPS_MIN = 8
+      STEPS_MAX = 30
       KLEIN_GUIDANCE = 1.0
       # Студия больше не принимает workflow='auto' (422: только
       # 'edit'/'reference'/'outpaint'). Поле вообще не шлём — студия
@@ -77,7 +79,7 @@ module Dn1sup
       ALLOWED_WORKFLOWS = %w[edit reference outpaint].freeze
       KLEIN_MEMORY_MODE = 'balanced'.freeze
       KLEIN_MAX_SIDE = 2048
-      KLEIN_LABEL = 'klein (distilled)'.freeze
+      KLEIN_LABEL = 'klein'.freeze
 
       # Жёсткая дописка для привязки к линиям эскиза. Действие: запрещает
       # модели двигать/добавлять/убирать стены, окна, двери и менять камеру —
@@ -165,19 +167,17 @@ module Dn1sup
         pick_variant(vars, quant, dv)
       end
 
-      # Дефолт генерации студии больше не используется: параметры
-      # зафиксированы под klein (distilled 4/1.0). Оставлен заглушкой
-      # для совместимости моста.
+      # Дефолт генерации студии: шаги из диапазона 8..30.
       def generation_preset(_url, _key)
-        { 'steps' => KLEIN_STEPS, 'guidance' => KLEIN_GUIDANCE }
+        { 'steps' => KLEIN_STEPS_DEFAULT, 'guidance' => KLEIN_GUIDANCE }
       end
 
-      # Единственный пресет — klein (distilled). Остальные семейства удалены:
+      # Единственный пресет — klein. Остальные семейства удалены:
       # расширение работает только с flux-3-image-klein.
       IMAGE_PRESETS = [
-        { match: %w[flux klein], skip: %w[], steps: 4, guidance: 1.0,
+        { match: %w[flux klein], skip: %w[], steps: 16, guidance: 1.0,
           workflow: nil, memory_mode: 'balanced', max_side: 2048,
-          label: 'klein (distilled)', vram: '≈13–16 ГБ' }
+          label: 'klein', vram: '≈13–16 ГБ' }
       ].freeze
 
       # 'auto'/пусто/мусор — nil (поле не шлём, студия выбирает сама).
@@ -197,7 +197,7 @@ module Dn1sup
       # Всегда klein-пресет независимо от входного id: другие модели
       # не поддерживаются. -> {steps, guidance, workflow, memory_mode, ...}.
       def preset_for(_model_id = nil, _studio_defaults = nil)
-        { 'steps' => KLEIN_STEPS, 'guidance' => KLEIN_GUIDANCE,
+        { 'steps' => KLEIN_STEPS_DEFAULT, 'guidance' => KLEIN_GUIDANCE,
           'workflow' => KLEIN_WORKFLOW, 'memory_mode' => KLEIN_MEMORY_MODE,
           'max_side' => KLEIN_MAX_SIDE, 'label' => KLEIN_LABEL,
           'vram' => '≈13–16 ГБ', 'source' => "пресет #{KLEIN_LABEL}" }
@@ -435,8 +435,8 @@ module Dn1sup
         ep
       end
 
-      # Генерация только на klein (distilled: строго 4 шага / 1.0).
-      # steps/guidance игнорируются из настроек (фиксированы).
+      # Генерация только на klein.
+      # steps берётся из настроек (8..30), guidance зафиксирован 1.0.
       # geometry_lock: true — дописать замок линий к промпту (доказанно меняет результат).
       # workflow: студия klein принимает только auto (поле не шлём) — edit 400
       # всегда, явный reference 400 в паре со strength. strength шлётся только
@@ -444,12 +444,12 @@ module Dn1sup
       # 0.6 и 1.0 попиксельно одинаковы). enhance_prompt/upscale студия klein
       # игнорирует/режет 400 — не шлём вообще.
       # Возвращает [items, w, h], где items — массив [bytes, meta].
-      def generate(url, key, sketch_path, prompt:, width:, height:, steps: 4, guidance: 1.0,
+      def generate(url, key, sketch_path, prompt:, width:, height:, steps: 16, guidance: 1.0,
                    strength: 1.0, seed: nil, allow_oversized: true, batch_size: 1,
                    seeds: nil, workflow: nil,
                    extra_references: nil, mixins_prompt: nil, http_id: nil,
                    geometry_lock: true)
-        steps = KLEIN_STEPS
+        steps = steps.to_i.clamp(STEPS_MIN, STEPS_MAX)
         guidance = KLEIN_GUIDANCE
         workflow = normalize_workflow(workflow)
         if workflow == 'edit'

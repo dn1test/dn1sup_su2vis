@@ -39,7 +39,7 @@
               {{ modelsLoading ? 'Опрос…' : 'Обновить' }}
             </button>
           </div>
-          <div class="text-slate-600">steps 4 · guidance 1.0 · workflow auto · память balanced · финал ≤ 2048</div>
+          <div class="text-slate-600">steps 8–30 · guidance 1.0 · workflow auto · память balanced · финал ≤ 2048</div>
           <div v-if="modelsError" class="text-red-600">{{ modelsError }}</div>
           <div v-else-if="modelsLoading" class="text-slate-500">Опрашиваю варианты квантования…</div>
           <label v-else-if="quantOptions.length" class="block">
@@ -149,7 +149,7 @@
                 </select>
               </label>
             </div>
-            <div class="text-[11px] text-slate-500">Attention — реализация внимания (на качество почти не влияет, решает скорость/VRAM). Step cache — кеш шагов: быстрее, ценой микропотери точности (на 4 шагах klein выигрыш мал).</div>
+            <div class="text-[11px] text-slate-500">Attention — реализация внимания (на качество почти не влияет, решает скорость/VRAM). Step cache — кеш шагов: быстрее, ценой микропотери точности.</div>
             <label class="block">
               <span class="text-xs text-slate-500">Text encoder file(s)</span>
               <div class="mt-1 w-full border rounded p-1.5 text-xs bg-slate-50 text-slate-500 break-all">../text_encoders/clip_l.safetensors (студия)</div>
@@ -247,8 +247,8 @@ function applyStaged() {
   if (!canApply.value) return
   const f = stagedGguf.value
   stagedGguf.value = ''
-  appliedMsg.value = `Прописан квант ${f} (steps 4, guidance 1.0) — нажмите Сохранить`
-  emit('update:modelValue', { ...props.modelValue, unsloth_gguf: f, steps: 4, guidance: 1.0 })
+  appliedMsg.value = `Прописан квант ${f} (steps 16, guidance 1.0) — нажмите Сохранить`
+  emit('update:modelValue', { ...props.modelValue, unsloth_gguf: f, guidance: 1.0 })
 }
 const currentStatus = computed(() => {
   const st = props.status

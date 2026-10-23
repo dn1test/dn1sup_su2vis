@@ -18,7 +18,7 @@ module Dn1sup
       IMAGE_EXTS = %w[.png .jpg .jpeg .webp].freeze
       DIRNAME = 'mixins'.freeze
       ROLES = %w[auto style material light object].freeze
-      APPLY_TO = %w[both preview final].freeze
+      APPLY_TO = %w[both final].freeze
       # Нормальный размер примеси: референсы уходят в студию base64 в JSON,
       # большие фото раздувают запрос и VRAM. Длинная сторона — 1024,
       # файл — до 4 МБ. Фронт жмёт на canvas до отправки (см. MixinsCol),
@@ -116,7 +116,7 @@ module Dn1sup
       end
 
       # Активные примеси для задачи: [{path, caption, caption_neg, role, weight}].
-      # kind: preview/final — отсекает apply_to чужой стадии.
+      # kind оставлен для совместимости ('final' — всё активное).
       def active_for_job(items, kind = nil)
         Array(items).filter_map do |m|
           next unless m.is_a?(Hash)
@@ -125,7 +125,7 @@ module Dn1sup
           cap = (m['caption'] || '').to_s
           next unless m.fetch('active', true) == true || m.fetch('active', true).to_s == 'true'
           apply = norm_apply_to(m['apply_to'] || m[:apply_to])
-          if kind && apply != 'both' && apply != kind.to_s
+          if kind && apply != 'both' && apply != kind.to_s && apply != 'final'
             next
           end
           { 'path' => p, 'caption' => cap,
@@ -568,6 +568,7 @@ module Dn1sup
 
       def norm_apply_to(v)
         s = v.to_s.strip.downcase
+        s = 'final' if s == 'preview'
         APPLY_TO.include?(s) ? s : 'both'
       end
 

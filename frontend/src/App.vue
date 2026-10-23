@@ -1,7 +1,7 @@
 <template>
   <div class="h-screen flex flex-col overflow-hidden">
     <header class="shrink-0 px-4 py-2 bg-slate-900 text-white flex items-center justify-between">
-      <div class="font-medium">DN1Sup SU2Vis <span class="text-slate-400 text-xs">сцены → примеси → превью → финал · v{{ settings.version || '0.1.0' }}</span></div>
+      <div class="font-medium">DN1Sup SU2Vis <span class="text-slate-400 text-xs">референс → промпт → рендер · v{{ settings.version || '0.1.0' }}</span></div>
       <div class="flex items-center gap-2 text-xs">
         <div class="flex items-center gap-2 cursor-pointer select-none" @click="checkStudio" :title="connTitle">
           <span class="inline-block w-2.5 h-2.5 rounded-full" :class="connDot"></span>
@@ -26,26 +26,21 @@
         @click="recheckProject">Проверить снова</button>
       <button class="shrink-0 px-2 py-1 text-slate-500 hover:text-slate-800" @click="projectDismissed = true">Позже</button>
     </div>
-    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[200px_240px_360px_340px_1fr]">
-      <ScenesCol :scenes="scenes" :selected="selected" :thumbs="thumbs" :enabled="useScenes" :sketch="sketchOpts"
-        @toggle="toggle" @toggle-enabled="setUseScenes" @update-sketch="setSketch"
-        @refresh="loadScenes" @sync-view="syncView" />
-      <MixinsCol :items="mixins" :enabled="useMixins" :settings="settings"
-        @add-data="addMixinData" @add-path="addMixinPath" @toggle="toggleMixin"
-        @toggle-enabled="setUseMixins" @update-settings="updateColumnSettings"
-        @caption="captionMixin" @neg="negMixin" @role="roleMixin" @weight="weightMixin"
-        @apply="applyMixin" @move="moveMixin" @delete="deleteMixin" @transform="transformMixin" />
-      <PreviewCol :job="previewAgg" :results="previews" :busy="busy"
-        :can-run="canPreview" :variants="Number(settings.preview_variants || 1)" :selected-seed="Number(settings.seed)"
-        :settings="settings" @update-settings="updateColumnSettings"
-        @variants="setVariants" @select-preview="selectPreview"
-        @preview="startPreview" @stop="stopCurrent" @final-one="finalOne" @delete="deletePreview" @retry="retryFinal" />
-      <SettingsCol v-model="settings" :status="studioStatus" :enhance-preview="enhancePreview"
-        @save="saveSettings" @enhance-preview="previewEnhance" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
-      <FinalCol :job="finalAgg" :results="finals" :busy="busy"
-        :can-run="previews.length > 0" :final-label="finalLabel" :settings="settings"
+    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[320px_400px_1fr]">
+      <ReferenceCol :scenes="scenes" :selected="selected" :thumbs="thumbs"
+        :enabled-scenes="useScenes" :enabled-mixins="useMixins" :sketch="sketchOpts"
+        :items="mixins" :settings="settings"
+        @toggle="toggle" @toggle-enabled-scenes="setUseScenes" @toggle-enabled-mixins="setUseMixins"
+        @update-sketch="setSketch" @refresh="loadScenes" @sync-view="syncView"
+        @add-data="addMixinData" @add-path="addMixinPath" @toggle-mixin="toggleMixin"
         @update-settings="updateColumnSettings"
-        @final-all="finalAll" @stop="stopCurrent" @view="viewFinal" @delete="deleteFinal" @retry="retryFinal" />
+        @caption="captionMixin" @neg="negMixin" @role="roleMixin" @weight="weightMixin"
+        @move="moveMixin" @delete="deleteMixin" @transform="transformMixin" />
+      <PromptCol v-model="settings" :enhance-preview="enhancePreview"
+        @save="saveSettings" @enhance-preview="previewEnhance" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
+      <RenderCol :job="finalAgg" :results="finals" :busy="busy"
+        :can-run="canRender" :final-label="finalLabel"
+        @render="startFinal" @stop="stopCurrent" @view="viewFinal" @delete="deleteFinal" @retry="retryFinal" />
     </div>
     <StatusBar :text="statusText" :tone="statusTone" :log="jobLog" :live="liveLogText"
       @load-log="loadLog" @clear-log="clearLog" />
@@ -69,11 +64,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { callRuby } from './bridge.js'
-import ScenesCol from './components/ScenesCol.vue'
-import PreviewCol from './components/PreviewCol.vue'
-import MixinsCol from './components/MixinsCol.vue'
-import FinalCol from './components/FinalCol.vue'
-import SettingsCol from './components/SettingsCol.vue'
+import ReferenceCol from './components/ReferenceCol.vue'
+import PromptCol from './components/PromptCol.vue'
+import RenderCol from './components/RenderCol.vue'
 import ConnectionModal from './components/ConnectionModal.vue'
 import StatusBar from './components/StatusBar.vue'
 
@@ -82,20 +75,14 @@ const selected = ref([])
 const thumbs = ref({})
 const mixins = ref([])
 const captionTimers = {}
-const settings = ref({ preview_preset: '256', preview_variants: 1, final_mode: 'sketch' })
-const previews = ref([])
+const settings = ref({ preview_variants: 1, final_mode: 'sketch', steps: 16 })
 const finals = ref([])
-const previewJobs = ref([])
 const finalJobs = ref([])
 const busy = ref(false)
-const busyKind = ref(null)
 const capturing = ref(false)
 const studioStatus = ref(null)
 const checkingStudio = ref(false)
-// true пока фоновый автозапуск студии не дал связи (шапка показывает «запуск…»).
 const studioStarting = ref(false)
-// Модель, загруженная в студии сейчас (repo/gguf из images/status).
-// В шапке показываем её; пока студия не опрошена — выбранную в настройках.
 const studioModel = ref({ repo: '', gguf: '' })
 
 function shortModel(repo) {
@@ -140,11 +127,9 @@ const modelsLoading = ref(false)
 const modelsError = ref('')
 
 const projectState = computed(() => settings.value.project_state || 'global')
-// Выключатели колонок: хранятся в settings (per-file), дефолт true для старых сохранений.
 const useScenes = computed(() => settings.value.use_scenes !== false)
 const useMixins = computed(() => settings.value.use_mixins !== false)
-// Что можно запустить: сцена / примеси / только промпт.
-const canPreview = computed(() => {
+const canRender = computed(() => {
   if (useScenes.value) return selected.value.length > 0
   if (useMixins.value) return mixins.value.some((m) => m.active !== false)
   return (settings.value.prompt || '').trim().length > 0
@@ -159,7 +144,6 @@ function flash(text) {
   setTimeout(() => { if (notice.value === text) notice.value = null }, 6000)
 }
 let pollTimer = null
-let pollKind = null
 
 const finalLabel = computed(() => {
   const m = settings.value.final_mode
@@ -170,23 +154,21 @@ const finalLabel = computed(() => {
 })
 
 const activeJob = computed(() => {
-  const list = pollKind === 'final' ? finalJobs.value : previewJobs.value
-  return list.find((j) => !['done', 'error', 'cancelled'].includes(j.status)) || list[list.length - 1] || null
+  return finalJobs.value.find((j) => !['done', 'error', 'cancelled'].includes(j.status)) || finalJobs.value[finalJobs.value.length - 1] || null
 })
 
-function agg(list, kind) {
+function agg(list) {
   if (!list.length) return null
   const done = list.filter((j) => ['done', 'error', 'cancelled'].includes(j.status)).length
   const running = list.some((j) => !['done', 'error', 'cancelled'].includes(j.status))
   const err = list.find((j) => j.status === 'error')
   return {
-    kind, status: err && !running ? 'error' : running ? 'running' : list[list.length - 1].status,
+    kind: 'final', status: err && !running ? 'error' : running ? 'running' : list[list.length - 1].status,
     error: err?.error, progress: { done, total: list.length }
   }
 }
 
-const previewAgg = computed(() => agg(previewJobs.value, 'preview'))
-const finalAgg = computed(() => agg(finalJobs.value, 'final'))
+const finalAgg = computed(() => agg(finalJobs.value))
 
 const statusText = computed(() => {
   if (capturing.value) return 'Снимаю эскизы сцен…'
@@ -199,50 +181,47 @@ const statusText = computed(() => {
     if (genProgress.value && genProgress.value.active) {
       const g = genProgress.value
       const pct = Math.round((g.fraction || 0) * 100)
-      live = ` · денойз ${g.step || 0}/${g.total_steps || 4} (${pct}%)`
+      live = ` · денойз ${g.step || 0}/${g.total_steps || 0} (${pct}%)`
     }
-    return `Работает ${j.kind === 'final' ? 'финал' : 'превью'}: ${done}/${total}${p.scene !== undefined ? `, сцена #${p.scene}` : ''}${live} — «Стоп» остановит и на студии.`
+    return `Работает рендер: ${done}/${total}${p.scene !== undefined ? `, сцена #${p.scene}` : ''}${live} — «Стоп» остановит и на студии.`
   }
-  if (previewAgg.value?.status === 'error') return `Превью: ошибка — ${previewAgg.value.error}`
-  if (finalAgg.value?.status === 'error') return `Финал: ошибка — ${finalAgg.value.error}`
-  if (previewJobs.value.some((j) => j.status === 'cancelled') || finalJobs.value.some((j) => j.status === 'cancelled')) return 'Остановлено пользователем.'
+  if (finalAgg.value?.status === 'error') return `Рендер: ошибка — ${finalAgg.value.error}`
+  if (finalJobs.value.some((j) => j.status === 'cancelled')) return 'Остановлено пользователем.'
   if (notice.value) return notice.value
   if (useScenes.value && !scenes.value.length) return 'Создайте сцены в модели и нажмите «Обновить».'
   if (!settings.value.unsloth_key) return 'Откройте «Подключение» в шапке и введите API-ключ студии.'
-  if (!previews.value.length) {
-    if (!useScenes.value && !useMixins.value) return 'Сцены и примеси выключены — генерация только по промпту: жмите «Превью».'
-    if (!useScenes.value) return 'Сцены выключены — выберите примеси и запустите «Превью».'
-    if (!useMixins.value) return 'Выберите сцену и запустите «Превью» (примеси выключены).'
-    return 'Выберите сцену и запустите «Превью».'
+  if (!finals.value.length) {
+    if (!useScenes.value && !useMixins.value) return 'Сцены и примеси выключены — генерация только по промпту: жмите «Рендер».'
+    if (!useScenes.value) return 'Сцены выключены — выберите примеси и запустите «Рендер».'
+    if (!useMixins.value) return 'Выберите сцену и запустите «Рендер» (примеси выключены).'
+    return 'Выберите сцену и запустите «Рендер».'
   }
-  if (!finals.value.length) return 'Превью готово: seed зафиксирован — жмите «В финал» на карточке или «Все превью в финал».'
-  return `Готово: финалов ${finals.value.length}. Seed превью сохранён для повторов.`
+  return `Готово: рендеров ${finals.value.length}.`
 })
 
 const statusTone = computed(() => {
   if (busy.value) return 'work'
-  if (previewAgg.value?.status === 'error' || finalAgg.value?.status === 'error') return 'error'
+  if (finalAgg.value?.status === 'error') return 'error'
   if (finals.value.length) return 'ok'
   return 'idle'
 })
 
-// Правая часть статусбара: живой прогресс, иначе последняя запись журнала.
 const liveLogText = computed(() => {
   if (genProgress.value && genProgress.value.active) {
     const g = genProgress.value
     const pct = Math.round((g.fraction || 0) * 100)
-    return `денойз ${g.step || 0}/${g.total_steps || 4} (${pct}%)`
+    return `денойз ${g.step || 0}/${g.total_steps || 0} (${pct}%)`
   }
   const j = activeJob.value
   if (busy.value && j) {
     const p = j.progress || {}
     const total = p.total || 0
     const done = p.done || 0
-    return `работает ${j.kind === 'final' ? 'финал' : 'превью'}: ${done}/${total}${p.scene !== undefined ? `, сцена #${p.scene}` : ''}`
+    return `работает рендер: ${done}/${total}${p.scene !== undefined ? `, сцена #${p.scene}` : ''}`
   }
   const e = jobLog.value.length ? jobLog.value[jobLog.value.length - 1] : null
   if (!e) return 'журнал пуст'
-  if (e.event === 'job_start') return `▸ ${e.kind}: сцены ${(e.scenes || []).join(',')}, seed ${e.seed}`
+  if (e.event === 'job_start') return `▸ рендер: сцены ${(e.scenes || []).join(',')}, seed ${e.seed}, steps ${e.steps || ''}`
   if (e.event === 'scene_done') return `· сцена #${e.scene}, seed ${e.seed}, ${e.size}, ${e.gen_s}с`
   if (e.event === 'job_done') return `■ ${e.status} за ${e.total_s}с${e.error ? ': ' + e.error : ''}`
   return String(e.event || 'журнал')
@@ -311,7 +290,6 @@ async function setUseMixins(v) {
   await saveSettings()
 }
 
-// Параметры съёма эскиза-референса (блок в 1-й колонке → settings → scenes_capture).
 const sketchOpts = computed(() => ({
   source: settings.value.sketch_source || 'hd',
   preset: settings.value.sketch_preset || '1024x768',
@@ -347,21 +325,9 @@ async function setSketch(patch) {
   await saveSettings()
 }
 
-async function setVariants(n) {
-  settings.value.preview_variants = Math.min(4, Math.max(1, Number(n) || 1))
-  await saveSettings()
-}
-
-// Правки из шестерёнок колонок (превью/финал/примеси): слить и сохранить сразу.
 async function updateColumnSettings(patch) {
   settings.value = { ...settings.value, ...(patch || {}) }
   await saveSettings()
-}
-
-async function selectPreview({ scene, seed }) {
-  settings.value.seed = seed
-  await saveSettings()
-  flash(`Выбрано превью #${scene}, seed ${seed} — в настройках`)
 }
 
 async function saveSettings() {
@@ -432,9 +398,6 @@ async function loadModels() {
   }
 }
 
-// Эскизы снимаем на главном потоке ДО старта фоновой задачи:
-// write_image из рабочего Thread отдаёт устаревший кадр.
-// Параметры съёма — из блока «Эскиз-референс» 1-й колонки.
 async function captureSketches(list, hd = false) {
   capturing.value = true
   try {
@@ -446,92 +409,31 @@ async function captureSketches(list, hd = false) {
   }
 }
 
-async function startPreview() {
+async function startFinal() {
   await saveSettings()
   if (useScenes.value) {
     if (!selected.value.length) return
   } else if (useMixins.value) {
     if (!activeMixins().length) { flash('Включите хотя бы одну примесь или включите сцены/только промпт'); return }
   } else if (!(settings.value.prompt || '').trim()) {
-    flash('Введите промпт в настройках — сцены и примеси выключены')
+    flash('Введите промпт — сцены и примеси выключены')
     return
   }
   busy.value = true
-  busyKind.value = 'preview'
-  // Галерею с диска не трогаем: новые результаты подмержатся в pollJob.
-  previewJobs.value = []
-  // Без сцены эскизы не снимаем — чистый text-to-image / только примеси.
+  finalJobs.value = []
   const list = useScenes.value ? selected.value : []
   const sketches = useScenes.value ? await captureSketches(list, true) : {}
-  if (!useScenes.value) {
-    const j = await callRuby('jobs_start', { kind: 'preview', scenes: [], sketches, mixins: activeMixins(), settings: { ...settings.value, preview_preset: '256' } })
-    if (j) previewJobs.value.push(j)
-    startPoll('preview')
-    return
-  }
-  for (const scene of list) {
-    const j = await callRuby('jobs_start', { kind: 'preview', scenes: [scene], sketches, mixins: activeMixins(), settings: { ...settings.value, preview_preset: '256' } })
-    if (j) previewJobs.value.push(j)
-  }
-  startPoll('preview')
-}
-
-// Ключ эскиза для задачи: сцена — её индекс, без сцены — 'prompt'.
-function sketchKey(scene) {
-  return scene === null || scene === undefined ? 'prompt' : scene
-}
-
-async function finalOne({ scene, seed }) {
-  const entry = previews.value.find((r) => r.scene === scene && r.seed === seed)
-  if (!entry || !entry.data_url) { flash('Нет картинки превью для финала — запустите превью заново'); return }
-  await saveSettings()
-  busy.value = true
-  busyKind.value = 'final'
-  const sketches = await savePreviewRefs([entry])
-  const st = useScenes.value
-    ? { ...settings.value, seeds: { [scene]: seed }, from_preview: true }
-    : { ...settings.value, seeds: { prompt: seed }, from_preview: true }
-  const j = await callRuby('jobs_start', { kind: 'final', scenes: useScenes.value ? [scene] : [], sketches, mixins: activeMixins(), settings: st })
-  if (j) finalJobs.value = [...finalJobs.value, j]
-  startPoll('final')
-}
-
-async function finalAll() {
-  if (!previews.value.length) return
-  await saveSettings()
-  busy.value = true
-  busyKind.value = 'final'
-  const list = previews.value.filter((r) => r.data_url).map((r) => ({ scene: r.scene, seed: r.seed }))
-  if (!list.length) { flash('Нет картинок превью для финала'); busy.value = false; return }
-  const sketches = await savePreviewRefs(list.map((x) => previews.value.find((r) => r.scene === x.scene && r.seed === x.seed)))
-  finalJobs.value = []
-  if (!useScenes.value) {
-    const seed = list[0].seed
-    const st = { ...settings.value, seeds: { prompt: seed }, from_preview: true }
-    const j = await callRuby('jobs_start', { kind: 'final', scenes: [], sketches, mixins: activeMixins(), settings: st })
-    if (j) finalJobs.value.push(j)
-    startPoll('final')
-    return
-  }
-  const scenes = [...new Set(list.map((x) => x.scene))]
-  for (const scene of scenes) {
-    const seed = list.find((x) => x.scene === scene).seed
-    const st = { ...settings.value, seeds: { [scene]: seed }, from_preview: true }
-    const j = await callRuby('jobs_start', { kind: 'final', scenes: [scene], sketches, mixins: activeMixins(), settings: st })
+  for (const scene of (list.length ? list : [null])) {
+    if (scene === null && list.length) continue
+    const scenesArg = scene === null ? [] : [scene]
+    const j = await callRuby('jobs_start', { kind: 'final', scenes: scenesArg, sketches, mixins: activeMixins(), settings: settings.value })
     if (j) finalJobs.value.push(j)
   }
-  startPoll('final')
-}
-
-// Байты выбранных превью — в файлы для финала (мост preview_save).
-async function savePreviewRefs(entries) {
-  const sketches = {}
-  for (const r of entries) {
-    const res = await callRuby('preview_save', { scene: r.scene ?? 0, seed: r.seed, data_url: r.data_url })
-    if (!res || !res.ok) throw new Error(res?.error || 'не сохранил превью для финала')
-    sketches[sketchKey(r.scene)] = res.path
+  if (!finalJobs.value.length) {
+    const j = await callRuby('jobs_start', { kind: 'final', scenes: [], sketches, mixins: activeMixins(), settings: settings.value })
+    if (j) finalJobs.value.push(j)
   }
-  return sketches
+  startPoll()
 }
 
 async function viewFinal(r) {
@@ -545,8 +447,6 @@ async function viewFinal(r) {
   else viewer.value = { error: (res && res.error) || 'не удалось загрузить', label: r.file }
 }
 
-// Догрузка картинки для карточки (финал из задачи или галерея с диска).
-// Неудача видна сразу на карточке + кнопка «Повторить», а не вечная загрузка.
 async function retryFinal(r) {
   if (!r.file) return
   r.load_error = null
@@ -558,8 +458,6 @@ async function retryFinal(r) {
 async function previewEnhance() {
   enhancePreview.value = { loading: true }
   const ref = selected.value.length ? (thumbs.value[selected.value[0]] || null) : null
-  // Апсемплер считается в фоне (Ruby Enhance): стартуем и опрашиваем,
-  // каждый опрос быстрый — главный поток SketchUp не висит.
   const started = await callRuby('enhance_preview', { prompt: settings.value.prompt, reference: ref })
   const task = started && started.ok && started.task ? started.task : null
   if (!task || !task.id) {
@@ -592,8 +490,7 @@ async function selectOutDir() {
 }
 
 async function stopCurrent() {
-  const list = pollKind === 'final' ? finalJobs.value : previewJobs.value
-  for (const job of list) {
+  for (const job of finalJobs.value) {
     if (job?.id && !['done', 'error', 'cancelled'].includes(job.status)) {
       await callRuby('jobs_cancel', { id: job.id })
     }
@@ -601,15 +498,14 @@ async function stopCurrent() {
   pollJob()
 }
 
-function startPoll(kind) {
+function startPoll() {
   stopPoll()
-  pollKind = kind
   pollTimer = setInterval(pollJob, 2000)
   pollJob()
 }
 
 async function pollJob() {
-  const list = pollKind === 'final' ? finalJobs.value : previewJobs.value
+  const list = finalJobs.value
   if (!list.length) return
   const live = settings.value.studio_live_preview !== false
   const polls = await Promise.all([
@@ -619,39 +515,23 @@ async function pollJob() {
   const g = live ? polls[polls.length - 1] : null
   genProgress.value = g && g.active ? g : null
   const updated = polls.slice(0, list.length)
-  if (pollKind === 'preview') {
-    previewJobs.value = updated.filter(Boolean)
-    // Свежие результаты + сохранённая галерея (файлы на диске не теряем).
-    const fresh = previewJobs.value.flatMap((j) => j.results || [])
-    const seen = new Set(fresh.map((r) => r.file).filter(Boolean))
-    previews.value = [...fresh, ...previews.value.filter((r) => r.file && !seen.has(r.file))]
-    const first = previewJobs.value.find((j) => j.status === 'done' && j.results?.length)
-    if (first && !previewJobs.value.some((j) => !['done', 'error', 'cancelled'].includes(j.status))) {
-      settings.value.seed = first.results[0].seed
-      await saveSettings()
-    }
-  } else {
-    finalJobs.value = updated.filter(Boolean)
-    const incoming = updated.flatMap((j) => (j && j.results ? j.results : []))
-    for (const r of incoming) {
-      const i = finals.value.findIndex((f) => (f.file && f.file === r.file) || (!f.file && !r.file && f.scene === r.scene))
-      if (i >= 0) finals.value[i] = { ...r, data_url: finals.value[i].data_url }
-      else finals.value.push(r)
-    }
-    // Догружаем картинки для просмотра (лениво, по одной за опрос).
-    // Ошибку показываем на карточке с повтором, а не вечной «загрузкой».
-    for (const f of finals.value) {
-      if (!f.data_url && f.file && !f.load_error) {
-        const res = await callRuby('final_view', { file: f.file })
-        if (res && res.ok) f.data_url = res.data_url
-        else f.load_error = (res && res.error) || 'не удалось загрузить'
-      }
+  finalJobs.value = updated.filter(Boolean)
+  const incoming = finalJobs.value.flatMap((j) => (j && j.results ? j.results : []))
+  for (const r of incoming) {
+    const i = finals.value.findIndex((f) => (f.file && f.file === r.file) || (!f.file && !r.file && f.scene === r.scene))
+    if (i >= 0) finals.value[i] = { ...r, data_url: finals.value[i].data_url }
+    else finals.value.push(r)
+  }
+  for (const f of finals.value) {
+    if (!f.data_url && f.file && !f.load_error) {
+      const res = await callRuby('final_view', { file: f.file })
+      if (res && res.ok) f.data_url = res.data_url
+      else f.load_error = (res && res.error) || 'не удалось загрузить'
     }
   }
-  const states = (pollKind === 'final' ? finalJobs.value : previewJobs.value).map((j) => j.status)
+  const states = finalJobs.value.map((j) => j.status)
   if (states.length && states.every((s) => ['done', 'error', 'cancelled'].includes(s))) {
     busy.value = false
-    busyKind.value = null
     genProgress.value = null
     stopPoll()
     loadLog()
@@ -671,14 +551,11 @@ async function loadLog() {
   if (Array.isArray(l)) jobLog.value = l
 }
 
-// Галерея с диска: файлы из папки пользователя должны быть на месте
-// при открытии панели. Картинки догружаем лениво (до 100 новейших).
 async function loadGallery() {
   const g = await callRuby('gallery_list')
   if (!Array.isArray(g)) return
-  previews.value = g.filter((e) => e && e.kind === 'preview')
   finals.value = g.filter((e) => e && e.kind !== 'preview')
-  for (const r of [...previews.value, ...finals.value].slice(0, 100)) {
+  for (const r of finals.value.slice(0, 100)) {
     if (!r.data_url && r.file && !r.load_error) {
       const res = await callRuby('final_view', { file: r.file })
       if (res && res.ok) r.data_url = res.data_url
@@ -687,14 +564,12 @@ async function loadGallery() {
   }
 }
 
-// Примеси: дополнительные референсы с подписями «что взять».
-// Колонка выключена — в задачу ничего не уходит.
 function activeMixins() {
   if (!useMixins.value) return []
   return mixins.value
     .filter((m) => m.active !== false)
     .map((m) => ({ path: m.file, file: m.file, caption: m.caption || '', caption_neg: m.caption_neg || '',
-      role: m.role || 'auto', weight: Number(m.weight) || 1, apply_to: m.apply_to || 'both', active: true,
+      role: m.role || 'auto', weight: Number(m.weight) || 1, apply_to: 'final', active: true,
       crop: m.crop || null, rotation: Number(m.rotation) || 0 }))
 }
 
@@ -770,11 +645,6 @@ function weightMixin({ item, weight }) {
   }, 800)
 }
 
-function applyMixin({ item, apply_to }) {
-  item.apply_to = apply_to
-  callRuby('mixins_update', { id: item.id, apply_to })
-}
-
 async function transformMixin({ item, crop, rotation }) {
   item.crop = crop
   item.rotation = rotation
@@ -802,7 +672,6 @@ async function deleteMixin(m) {
   }
 }
 
-// Удаление — только по иконке ✕ на картинке. Автоматической чистки нет.
 async function deleteEntry(r, arr) {
   if (!r.file) { flash('У этой картинки нет файла на диске'); return }
   const res = await callRuby('gallery_delete', { file: r.file })
@@ -813,7 +682,6 @@ async function deleteEntry(r, arr) {
     flash('Не удалил: ' + (res?.error || 'ошибка'))
   }
 }
-const deletePreview = (r) => deleteEntry(r, previews)
 const deleteFinal = (r) => deleteEntry(r, finals)
 
 async function clearLog() {
@@ -828,7 +696,6 @@ onMounted(async () => {
   await loadMixins()
   await ensureStudio()
   await checkStudio()
-  // Студия стартует десятки секунд: допроверяем в фоне до связи.
   for (let i = 0; i < 30 && (!studioStatus.value || !studioStatus.value.ok); i++) {
     await new Promise((r) => setTimeout(r, 2000))
     await checkStudio()
