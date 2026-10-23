@@ -56,7 +56,7 @@
       </label>
       <div>
         <span class="text-xs text-slate-500">Resolution</span>
-        <div class="text-xs text-slate-400">Размер в пикселях. Больше = детальнее, но жрёт VRAM; потолок студии 2048 по длинной.</div>
+        <div class="text-xs text-slate-400">Размер в пикселях. Больше = детальнее, но жрёт VRAM; потолок студии 2048 по длинной. Вторая сторона подтягивается сама — пропорции сохраняются (⇄ — перевернуть).</div>
         <div class="mt-1 grid grid-cols-2 gap-2">
           <select :value="Number(modelValue.final_w)" @change="updSaveWH('final_w', +$event.target.value)"
             class="w-full border rounded p-1.5 text-xs bg-white">
@@ -195,8 +195,28 @@ function setAspect(v) {
   emit('save')
 }
 function updSaveWH(key, v) {
-  emit('update:modelValue', { ...props.modelValue, final_mode: 'custom', [key]: v })
+  const other = key === 'final_w' ? 'final_h' : 'final_w'
+  const patch = { final_mode: 'custom', [key]: v }
+  // Пропорции не сбрасываем: вторую сторону тянем за первой по старому
+  // отношению, с привязкой к шагу Resolution.
+  const curW = Number(props.modelValue.final_w) || 0
+  const curH = Number(props.modelValue.final_h) || 0
+  if (curW > 0 && curH > 0) {
+    const ratio = key === 'final_w' ? curH / curW : curW / curH
+    patch[other] = nearestRes(Math.round(v * ratio))
+  }
+  emit('update:modelValue', { ...props.modelValue, ...patch })
   emit('save')
+}
+function nearestRes(x) {
+  const c = Math.min(2048, Math.max(256, x))
+  let best = RES_OPTIONS[0]
+  let bd = Infinity
+  for (const o of RES_OPTIONS) {
+    const d = Math.abs(o - c)
+    if (d < bd) { bd = d; best = o }
+  }
+  return best
 }
 function swapWH() {
   emit('update:modelValue', { ...props.modelValue, final_mode: 'custom',
