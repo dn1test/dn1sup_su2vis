@@ -26,12 +26,12 @@
         @click="recheckProject">Проверить снова</button>
       <button class="shrink-0 px-2 py-1 text-slate-500 hover:text-slate-800" @click="projectDismissed = true">Позже</button>
     </div>
-    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[320px_400px_1fr]">
-      <ReferenceCol :scenes="scenes" :selected="selected" :thumbs="thumbs"
+    <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 grid-cols-[minmax(0,1fr)_300px_minmax(0,1fr)]">
+      <ReferenceCol :scenes="scenes" :selected="selected" :thumbs="thumbs" :preview="previewSize"
         :enabled-scenes="useScenes" :enabled-mixins="useMixins" :sketch="sketchOpts"
         :items="mixins" :settings="settings"
         @toggle="toggle" @toggle-enabled-scenes="setUseScenes" @toggle-enabled-mixins="setUseMixins"
-        @update-sketch="setSketch" @refresh="loadScenes" @sync-view="syncView"
+        @update-sketch="setSketch" @update-preview="setPreviewSize" @refresh="loadScenes" @sync-view="syncView"
         @add-data="addMixinData" @add-path="addMixinPath" @toggle-mixin="toggleMixin"
         @update-settings="updateColumnSettings"
         @caption="captionMixin" @neg="negMixin" @role="roleMixin" @weight="weightMixin"
@@ -129,6 +129,17 @@ const modelsError = ref('')
 const projectState = computed(() => settings.value.project_state || 'global')
 const useScenes = computed(() => settings.value.use_scenes !== false)
 const useMixins = computed(() => settings.value.use_mixins !== false)
+const previewSize = computed(() => {
+  const v = String(settings.value.preview_size || 'mid')
+  return ['min', 'mid', 'max'].includes(v) ? v : 'mid'
+})
+
+async function setPreviewSize(v) {
+  if (!['min', 'mid', 'max'].includes(String(v))) return
+  settings.value.preview_size = String(v)
+  await saveSettings()
+  await loadScenes()
+}
 const canRender = computed(() => {
   if (useScenes.value) return selected.value.length > 0
   if (useMixins.value) return mixins.value.some((m) => m.active !== false)
@@ -259,8 +270,9 @@ async function loadScenes() {
   if (!selected.value.length && scenes.value.length) selected.value = [scenes.value[0].index]
   const next = {}
   const white = settings.value.sketch_white_bg === true
+  const preview = previewSize.value
   for (const s of scenes.value) {
-    const t = await callRuby('scenes_thumb', { index: s.index, white_bg: white })
+    const t = await callRuby('scenes_thumb', { index: s.index, white_bg: white, preview })
     if (t && t.thumb) next[t.index] = t.thumb
   }
   thumbs.value = next
@@ -272,7 +284,7 @@ async function loadAll() {
 }
 
 async function syncView(index) {
-  const r = await callRuby('scenes_sync_view', { index, white_bg: settings.value.sketch_white_bg === true })
+  const r = await callRuby('scenes_sync_view', { index, white_bg: settings.value.sketch_white_bg === true, preview: previewSize.value })
   if (r && r.thumb) thumbs.value = { ...thumbs.value, [r.index]: r.thumb }
 }
 

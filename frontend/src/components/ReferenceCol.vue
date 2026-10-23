@@ -1,5 +1,5 @@
 <template>
-  <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full">
+  <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full min-w-0">
     <div class="shrink-0 px-3 py-2 border-b bg-slate-50">
       <div class="font-medium mb-1">Референс</div>
       <div class="flex gap-1">
@@ -9,13 +9,23 @@
       </div>
     </div>
     <!-- Сцены -->
-    <div v-if="active === 'scenes'" class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-2" :class="!enabledScenes ? 'opacity-50 pointer-events-none' : ''">
-      <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-        <input type="checkbox" :checked="enabledScenes" @change="emit('toggle-enabled-scenes', $event.target.checked)" />
-        использовать сцены (выкл — только промпт/примеси)
-      </label>
+    <div v-if="active === 'scenes'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div class="shrink-0 px-3 pt-3">
+        <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+          <input type="checkbox" :checked="enabledScenes" @change="emit('toggle-enabled-scenes', $event.target.checked)" />
+          использовать сцены (выкл — только промпт/примеси)
+        </label>
+      </div>
+      <div class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-2" :class="!enabledScenes ? 'opacity-50 pointer-events-none' : ''">
       <div class="flex gap-1">
         <button class="flex-1 px-2 py-1 text-xs border rounded hover:bg-slate-100" @click="emit('refresh')">Обновить</button>
+      </div>
+      <div class="flex items-center gap-1">
+        <span class="text-xs text-slate-500">Превью:</span>
+        <button v-for="p in previewSizes" :key="p.id" @click="emit('update-preview', p.id)"
+          class="flex-1 px-1 py-1 text-xs border rounded"
+          :class="preview === p.id ? 'bg-slate-900 text-white' : 'hover:bg-slate-100'"
+          :title="p.title">{{ p.label }}</button>
       </div>
       <div v-if="!scenes.length" class="text-xs text-slate-500">Нет сцен. Создайте сцены в модели → «Обновить».</div>
       <div v-else class="text-xs text-slate-500">Выберите одну сцену. Эскиз = сохранённый вид сцены. Покрутили камеру — жмите ⟳ на сцене.</div>
@@ -30,15 +40,18 @@
         </div>
         <img v-if="thumbs[s.index]" :src="thumbs[s.index]" class="w-full aspect-[4/3] object-cover bg-slate-200" />
         <div v-else class="w-full aspect-[4/3] bg-slate-200 flex items-center justify-center text-xs text-slate-500">вид сцены</div>
-      </label>
+        </label>
+      </div>
     </div>
     <!-- Примеси -->
-    <div v-if="active === 'mixins'" class="flex-1 min-h-0 flex flex-col overflow-hidden" :class="!enabledMixins ? 'opacity-50 pointer-events-none' : ''">
-      <div class="shrink-0 p-3 pb-0 space-y-2">
+    <div v-if="active === 'mixins'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div class="shrink-0 px-3 pt-3">
         <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
           <input type="checkbox" :checked="enabledMixins" @change="emit('toggle-enabled-mixins', $event.target.checked)" />
           использовать примеси ({{ activeCount }}/{{ items.length }})
         </label>
+      </div>
+      <div class="shrink-0 p-3 pb-0 space-y-2" :class="!enabledMixins ? 'opacity-50 pointer-events-none' : ''">
         <div class="flex gap-2">
           <label class="flex-1 px-3 py-2 rounded bg-slate-900 text-white text-xs text-center cursor-pointer hover:bg-slate-700">
             Добавить…
@@ -60,7 +73,7 @@
         </label>
         <div v-if="!items.length" class="text-xs text-slate-500">Картинки-референсы + подпись «что взять». Учитываются в рендере.</div>
       </div>
-      <div class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-2">
+      <div class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-2" :class="!enabledMixins ? 'opacity-50 pointer-events-none' : ''">
         <div v-for="(m, idx) in items" :key="m.id" class="relative border rounded overflow-hidden" :class="m.active === false ? 'opacity-60' : ''">
           <button class="absolute top-1 right-1 z-10 w-6 h-6 text-xs rounded-full bg-black/60 text-white hover:bg-red-600"
             title="Удалить файл" @click.stop="emit('delete', m)">✕</button>
@@ -82,7 +95,7 @@
           </div>
           <div class="p-2 space-y-1">
             <div class="flex items-center gap-1">
-              <input type="checkbox" :checked="m.active !== false" @change="emit('toggle', m)" />
+              <input type="checkbox" :checked="m.active !== false" @change="emit('toggle-mixin', m)" />
               <span class="text-xs font-medium truncate flex-1" :title="m.name">{{ m.name || m.id }}</span>
               <button class="px-1.5 py-0.5 text-xs border rounded hover:bg-slate-100 disabled:opacity-30" :disabled="idx === 0"
                 title="Выше (сильнее в запросе)" @click="emit('move', { item: m, dir: -1 })">▲</button>
@@ -169,6 +182,7 @@ const props = defineProps({
   scenes: { type: Array, default: () => [] },
   selected: { type: Array, default: () => [] },
   thumbs: { type: Object, default: () => ({}) },
+  preview: { type: String, default: 'mid' },
   enabledScenes: { type: Boolean, default: true },
   enabledMixins: { type: Boolean, default: true },
   sketch: { type: Object, default: () => ({ source: 'hd', preset: '1024x768', thin_lines: true, hide_dims: true, autocrop: false, white_bg: false }) },
@@ -176,8 +190,13 @@ const props = defineProps({
   settings: { type: Object, default: () => ({}) }
 })
 const emit = defineEmits(['toggle', 'refresh', 'sync-view', 'toggle-enabled-scenes', 'toggle-enabled-mixins',
-  'update-sketch', 'add-data', 'add-path', 'caption', 'neg', 'role', 'weight', 'move', 'delete',
+  'update-sketch', 'update-preview', 'add-data', 'add-path', 'toggle-mixin', 'caption', 'neg', 'role', 'weight', 'move', 'delete',
   'transform', 'update-settings'])
+const previewSizes = [
+  { id: 'min', label: 'Мин 400', title: 'Превью 400×300 (4:3)' },
+  { id: 'mid', label: 'Сред 800', title: 'Превью 800×600 (4:3)' },
+  { id: 'max', label: 'Макс 1200', title: 'Превью 1200×900 (4:3)' }
+]
 const sketchPresets = ['800x600', '1024x768', '1280x960']
 function upd(key, value) {
   emit('update-sketch', { ...props.sketch, [key]: value })

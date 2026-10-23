@@ -67,6 +67,7 @@ const mockSettings = {
   unsloth_model: 'unsloth/flux-3-image-klein-GGUF',
   unsloth_gguf: 'flux-3-image-klein-UD-Q4_K_XL.gguf',
   sketch_preset: '1024x768', sketch_source: 'hd', sketch_thin_lines: true, sketch_hide_dims: true, sketch_autocrop: false,
+  preview_size: 'mid',
   preview_variants: 1, preview_random_seeds: true,
   out_dir: '',
   project_state: 'global', project_dir: '', model_name: '',

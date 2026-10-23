@@ -153,16 +153,24 @@ module Dn1sup
           dlg.add_action_callback('scenes_thumb') do |_ctx, req_id, params|
             data = parse_payload(params)
             white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
+            key = data['preview'] || data['preview_size'] || Settings.get('preview_size')
+            w, h = Scenes.preview_dims(key)
+            w = data['w'].to_i > 0 ? data['w'].to_i : w
+            h = data['h'].to_i > 0 ? data['h'].to_i : h
             push_event('result', id: req_id,
-                       payload: { index: data['index'].to_i, thumb: Scenes.thumbnail(data['index'].to_i, white_bg: white) })
+                       payload: { index: data['index'].to_i, thumb: Scenes.thumbnail(data['index'].to_i, w, h, white_bg: white) })
           end
           dlg.add_action_callback('scenes_sync_view') do |_ctx, req_id, params|
             data = parse_payload(params)
             idx = data['index'].to_i
             ok = Scenes.update_camera(idx)
             white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
+            key = data['preview'] || data['preview_size'] || Settings.get('preview_size')
+            w, h = Scenes.preview_dims(key)
+            w = data['w'].to_i > 0 ? data['w'].to_i : w
+            h = data['h'].to_i > 0 ? data['h'].to_i : h
             push_event('result', id: req_id,
-                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx, white_bg: white) })
+                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx, w, h, white_bg: white) })
           end
           dlg.add_action_callback('scenes_capture') do |_ctx, req_id, params|
             data = parse_payload(params)

@@ -190,13 +190,28 @@ module Dn1sup
         nil
       end
 
-      # Тумба для списка сцен (170x128, base64 data-url): тонкие линии
-      # без силуэтов и без размеров — мелкий формат, профили ни к чему.
-      THUMB_W = 170
-      THUMB_H = 128
+      # Превью для списка сцен (4:3, base64 data-url): тонкие линии
+      # без силуэтов и без размеров — профили ни к чему.
+      # Три заготовки по ширине: мин 400 / сред 800 / макс 1200.
+      PREVIEW_SIZES = {
+        'min' => [400, 300],
+        'mid' => [800, 600],
+        'max' => [1_200, 900]
+      }.freeze
+      PREVIEW_DEFAULT = 'mid'
 
-      def thumbnail(index, white_bg: false)
-        path = capture(index, THUMB_W, THUMB_H, thin_lines: true, white_bg: white_bg)
+      # Совместимость: старая тумба 170x128 убрана, дефолт — сред 800x600.
+      THUMB_W = 800
+      THUMB_H = 600
+
+      def preview_dims(key)
+        PREVIEW_SIZES.fetch(key.to_s, PREVIEW_SIZES[PREVIEW_DEFAULT])
+      end
+
+      def thumbnail(index, w = nil, h = nil, white_bg: false)
+        w = w.to_i > 0 ? w.to_i : THUMB_W
+        h = h.to_i > 0 ? h.to_i : THUMB_H
+        path = capture(index, w, h, thin_lines: true, white_bg: white_bg)
         "data:image/png;base64,#{Base64.strict_encode64(File.binread(path))}"
       rescue StandardError
         nil

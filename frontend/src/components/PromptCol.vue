@@ -1,5 +1,5 @@
 <template>
-  <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full">
+  <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full min-w-0">
     <div class="shrink-0 px-3 py-2 border-b bg-slate-50 font-medium">Промпт</div>
     <div class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-3">
       <label class="block">

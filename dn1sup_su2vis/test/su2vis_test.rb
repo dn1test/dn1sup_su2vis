@@ -819,9 +819,15 @@ module Dn1sup
         end
       end
 
-      test 'scenes: тумбы 170x128 с тонкими линиями' do
-        assert_equal(170, Scenes::THUMB_W)
-        assert_equal(128, Scenes::THUMB_H)
+      test 'scenes: превью 400/800/1200 (4:3) с тонкими линиями' do
+        assert_equal([400, 300], Scenes::PREVIEW_SIZES['min'])
+        assert_equal([800, 600], Scenes::PREVIEW_SIZES['mid'])
+        assert_equal([1_200, 900], Scenes::PREVIEW_SIZES['max'])
+        assert_equal([800, 600], Scenes.preview_dims('mid'))
+        assert_equal([800, 600], Scenes.preview_dims('мусор'))
+        assert_equal('mid', Settings::DEFAULTS['preview_size'])
+        assert_equal('mid', Settings.coerce('preview_size', 'мусор'))
+        assert_equal('max', Settings.coerce('preview_size', 'max'))
         assert(Scenes.method(:capture).parameters.include?([:key, :thin_lines]), 'у capture нет thin_lines:')
       end
 

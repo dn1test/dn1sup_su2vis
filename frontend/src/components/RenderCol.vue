@@ -1,5 +1,5 @@
 <template>
-  <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full">
+  <div class="border rounded-lg bg-white overflow-hidden flex flex-col min-h-0 max-h-full min-w-0">
     <div class="shrink-0 px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
       <span class="font-medium">Рендер</span>
       <span v-if="job" class="text-xs px-2 py-0.5 rounded border"
