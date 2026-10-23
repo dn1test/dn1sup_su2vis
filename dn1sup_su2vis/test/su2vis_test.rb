@@ -330,6 +330,14 @@ module Dn1sup
         assert_equal(1, Settings.coerce('preview_variants', nil).to_i.clamp(1, 4))
       end
 
+      test 'settings: final_w/final_h клампятся к 256..2048 (не к 1..4)' do
+        assert_equal(1024, Settings.coerce('final_w', '1024'))
+        assert_equal(1536, Settings.coerce('final_h', 1536))
+        assert_equal(256, Settings.coerce('final_w', '4'), 'битые 4px из 0.17.0 лечатся в 256')
+        assert_equal(2048, Settings.coerce('final_h', '9999'))
+        assert_equal(2048, Settings.coerce('final_w', 2048))
+      end
+
       test 'client: scale_to_long тянет длинную к px' do
         assert_equal([1600, 1120], Client.scale_to_long(368, 256, 1600))
         assert_equal([1600, 1600], Client.scale_to_long(100, 100, 1600))

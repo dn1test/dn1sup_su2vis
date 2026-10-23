@@ -329,7 +329,8 @@ module Dn1sup
         when 'sketch_source' then %w[hd view preset].include?(value.to_s) ? value.to_s : 'hd'
         when 'preview_size' then %w[min mid max].include?(value.to_s) ? value.to_s : 'mid'
         when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1024x768'
-        when 'final_w', 'final_h', 'preview_variants' then value.to_i.clamp(1, 4)
+        when 'final_w', 'final_h' then value.to_i.clamp(256, 2048)
+        when 'preview_variants' then value.to_i.clamp(1, 4)
         when 'strength', 'final_strength' then value.to_f
         when 'runs', 'preview_preset', 'preview_max' then value.to_i
         else value.to_s

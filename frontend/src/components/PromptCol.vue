@@ -42,6 +42,8 @@
           <select :value="aspectVal" @change="setAspect($event.target.value)"
             class="flex-1 min-w-0 border rounded p-1.5 text-xs bg-white">
             <option value="sketch">Размер эскиза</option>
+            <option value="1k">По длинной 1024 (1K)</option>
+            <option value="2k">По длинной 2048 (2K)</option>
             <option value="1:1">Square (1:1)</option>
             <option value="4:3">Landscape (4:3)</option>
             <option value="3:4">Portrait (3:4)</option>
@@ -81,9 +83,13 @@
       </label>
       <label class="block">
         <span class="text-xs text-slate-500">Seed (пусто = случайно)</span>
-        <input type="text" inputmode="numeric" placeholder="Random if empty"
-          :value="modelValue.seed < 0 ? '' : modelValue.seed" @input="updSeed($event.target.value)"
-          class="mt-1 w-full border rounded p-1.5" />
+        <div class="mt-1 flex gap-1">
+          <input type="text" inputmode="numeric" placeholder="Random if empty"
+            :value="modelValue.seed < 0 ? '' : modelValue.seed" @input="updSeed($event.target.value)"
+            class="flex-1 min-w-0 border rounded p-1.5" />
+          <button class="shrink-0 px-2 py-1 text-xs border rounded hover:bg-slate-100 bg-white"
+            title="Сбросить seed в случайный" @click="updSave('seed', -1)">🎲</button>
+        </div>
       </label>
       <div class="text-xs text-slate-400">Seed — зерно случайности. Пусто = случайно каждый раз; число = повтор даёт попиксельно тот же результат.</div>
       <details class="border rounded">
@@ -151,7 +157,7 @@
 import { computed } from 'vue'
 const props = defineProps({ modelValue: { type: Object, required: true }, enhancePreview: { type: Object, default: null } })
 const emit = defineEmits(['update:modelValue', 'save', 'enhance-preview', 'select-out-dir', 'open-out-dir'])
-const RES_OPTIONS = [512, 768, 1024, 1280, 1536, 2048]
+const RES_OPTIONS = [256, 512, 768, 1024, 1280, 1536, 2048]
 const ASPECT_SIZES = { '1:1': [1024, 1024], '4:3': [1280, 960], '3:4': [960, 1280], '16:9': [1536, 864] }
 function upd(key, value) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
@@ -171,9 +177,9 @@ const stepsVal = computed(() => {
 })
 const variantsVal = computed(() => Number(props.modelValue.preview_variants) || 1)
 const aspectVal = computed(() => {
-  if (props.modelValue.final_mode !== 'custom') {
-    return props.modelValue.final_mode === 'sketch' ? 'sketch' : '__custom'
-  }
+  const m = props.modelValue.final_mode
+  if (m === 'sketch' || m === '1k' || m === '2k') return m
+  if (m !== 'custom') return '__custom'
   const w = Number(props.modelValue.final_w)
   const h = Number(props.modelValue.final_h)
   for (const [k, [aw, ah]] of Object.entries(ASPECT_SIZES)) {
@@ -183,7 +189,7 @@ const aspectVal = computed(() => {
 })
 function setAspect(v) {
   if (v === '__custom') return
-  if (v === 'sketch') { updSave('final_mode', 'sketch'); return }
+  if (v === 'sketch' || v === '1k' || v === '2k') { updSave('final_mode', v); return }
   const [w, h] = ASPECT_SIZES[v]
   emit('update:modelValue', { ...props.modelValue, final_mode: 'custom', final_w: w, final_h: h })
   emit('save')
