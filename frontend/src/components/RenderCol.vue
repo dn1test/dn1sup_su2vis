@@ -16,6 +16,14 @@
         <button v-if="busy" @click="emit('stop')"
           class="px-3 py-2 rounded bg-red-600 text-white text-xs hover:bg-red-500">Стоп</button>
       </div>
+      <div v-if="results.length" class="flex justify-end">
+        <button :disabled="busy" @click="askDeleteAll"
+          class="px-2 py-1 text-xs border rounded disabled:opacity-40"
+          :class="confirmAll ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'hover:bg-slate-100'"
+          :title="confirmAll ? 'Ещё раз — удалит все файлы с диска' : 'Удалить все отрендеренные файлы с диска'">
+          {{ confirmAll ? 'Точно удалить все?' : `Удалить все (${results.length})` }}
+        </button>
+      </div>
       <div v-if="job && job.status === 'error'" class="text-xs text-red-600">{{ job.error }}</div>
       <div v-if="job && job.status === 'cancelled'" class="text-xs text-slate-500">Остановлено, сохранено {{ results.length }}.</div>
       <div v-if="!results.length" class="text-xs text-slate-500">Рендер идёт напрямую из эскиза сцены + примесей + промпта.</div>
@@ -42,7 +50,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 const props = defineProps({
   job: { type: Object, default: null },
   results: { type: Array, default: () => [] },
@@ -50,7 +58,7 @@ const props = defineProps({
   canRun: { type: Boolean, default: false },
   finalLabel: { type: String, default: '' }
 })
-const emit = defineEmits(['render', 'stop', 'view', 'delete', 'retry'])
+const emit = defineEmits(['render', 'stop', 'view', 'delete', 'retry', 'delete-all'])
 const progressText = computed(() => {
   const p = props.job?.progress
   return p && p.total ? `${p.done || 0}/${p.total}` : ''
@@ -59,4 +67,18 @@ function shortFile(f) {
   const s = String(f || '')
   return s.length > 40 ? '…' + s.slice(-39) : s
 }
+// Подтверждение в самой кнопке: нативный confirm() в HtmlDialog недоступен.
+const confirmAll = ref(false)
+let confirmTimer = null
+function askDeleteAll() {
+  clearTimeout(confirmTimer)
+  if (!confirmAll.value) {
+    confirmAll.value = true
+    confirmTimer = setTimeout(() => { confirmAll.value = false }, 3000)
+    return
+  }
+  confirmAll.value = false
+  emit('delete-all')
+}
+onUnmounted(() => clearTimeout(confirmTimer))
 </script>

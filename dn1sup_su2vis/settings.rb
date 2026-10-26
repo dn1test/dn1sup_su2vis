@@ -7,7 +7,8 @@ require 'fileutils'
 module Dn1sup
   module Su2vis
     # Настройки: подключение (ключ студии) — глобально в SketchUp defaults,
-    # всё остальное — per-file: su2vis/su2vis.json рядом с .skp модели.
+    # всё остальное — per-file: su2vis_<имя модели>/su2vis.json рядом с .skp
+    # (проекты в старой папке su2vis/ продолжают работать — см. project_dir).
     # Без модели (пустой path) или без папки проекта — legacy-режим:
     # чтение/запись через SketchUp defaults, как раньше.
     module Settings
@@ -29,7 +30,6 @@ module Dn1sup
         'sketch_hide_dims' => true,
         'sketch_autocrop' => false,
         'sketch_white_bg' => false,
-        'preview_size' => 'mid',
         'preview_variants' => 1,
         'preview_random_seeds' => true,
         'final_mode' => 'sketch',
@@ -84,17 +84,52 @@ module Dn1sup
         ''
       end
 
-      # Папка проекта для пути модели: <dir модели>/su2vis. Пустой путь — nil.
+      # Имя папки проекта из имени модели: su2vis_<имя .skp>. Запрещённые в
+      # Windows символы и хвосты «._ » чистятся, длина клампится — иначе
+      # FileUtils.mkdir_p на такой папке упадёт. Пустое имя (некуда чистить) —
+      # просто su2vis.
+      def project_dirname_for(model_path)
+        safe = File.basename(model_path.to_s, '.*')
+                .gsub(/[\/\\:*?"<>|]+/, '_')
+                .gsub(/[.\s]+\z/, '')
+                .strip[0, 60].to_s
+        safe.empty? ? PROJECT_DIRNAME : "#{PROJECT_DIRNAME}_#{safe}"
+      end
+
+      # Папка проекта для пути модели: <dir модели>/su2vis_<имя модели>.
+      # Пустой путь — nil.
       def project_dir_for(model_path)
         p = model_path.to_s
         return nil if p.empty?
 
-        File.join(File.dirname(p), PROJECT_DIRNAME)
+        File.join(File.dirname(p), project_dirname_for(p))
+      end
+
+      # su2vis (старые проекты) или su2vis_* (новые, с именем модели).
+      def project_dirname?(base)
+        b = base.to_s
+        b == PROJECT_DIRNAME || b.start_with?("#{PROJECT_DIRNAME}_")
+      end
+
+      # Фолбэк для проектов, созданных до суффикса с именем модели: новая
+      # папка su2vis_<имя> ещё не создана, а старая su2vis/ с su2vis.json
+      # лежит рядом — работаем в ней, ничего не теряется. Готовая новая
+      # папка всегда перекрывает старую.
+      def legacy_project_fallback(new_dir)
+        return nil if new_dir.nil?
+        return nil if File.basename(new_dir.to_s) == PROJECT_DIRNAME
+        return nil if File.file?(project_settings_path(new_dir))
+
+        old = File.join(File.dirname(new_dir.to_s), PROJECT_DIRNAME)
+        File.file?(project_settings_path(old)) ? old : nil
       end
 
       # Папка проекта активной модели (nil — модель не сохранена).
       def project_dir
-        project_dir_for(model_path)
+        d = project_dir_for(model_path)
+        return d if d.nil?
+
+        legacy_project_fallback(d) || d
       end
 
       def project_settings_path(dir)
@@ -227,13 +262,13 @@ module Dn1sup
         all(dir)
       end
 
-      # Удаление папки проекта: только su2vis/ (проверка имени), рекурсивно.
-      # После удаления all() отдаёт legacy/дефолт — панель снова предложит
-      # создать папку рядом с файлом. Чужой путь отклоняется.
+      # Удаление папки проекта: только su2vis/ или su2vis_<имя>/ (проверка
+      # имени), рекурсивно. После удаления all() отдаёт legacy/дефолт — панель
+      # снова предложит создать папку рядом с файлом. Чужой путь отклоняется.
       def delete_project(dir = :auto)
         d = dir == :auto ? project_dir : dir
         raise 'модель не сохранена: удалять нечего' if d.nil? || d.to_s.empty?
-        raise 'это не папка проекта su2vis' unless File.basename(d.to_s) == PROJECT_DIRNAME
+        raise 'это не папка проекта su2vis' unless project_dirname?(File.basename(d.to_s))
 
         FileUtils.rm_rf(d.to_s) if File.exist?(d.to_s)
         all(dir)
@@ -328,7 +363,6 @@ module Dn1sup
         when 'unsloth_cmd' then value.to_s.strip.empty? ? 'unsloth' : value.to_s.strip
         when 'sketch_source' then %w[hd view preset].include?(value.to_s) ? value.to_s : 'hd'
         when 'final_mode' then %w[sketch 1k 2k custom].include?(value.to_s) ? value.to_s : 'sketch'
-        when 'preview_size' then %w[min mid max].include?(value.to_s) ? value.to_s : 'mid'
         when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1024x768'
         when 'final_w', 'final_h' then value.to_i.clamp(256, 2048)
         when 'preview_variants' then value.to_i.clamp(1, 4)

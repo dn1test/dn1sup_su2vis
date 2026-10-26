@@ -15,32 +15,34 @@
     <div v-if="showProjectBanner" class="shrink-0 px-4 py-2 text-xs flex items-center gap-3"
       :class="projectState === 'unsaved' ? 'bg-amber-100 text-amber-900' : 'bg-sky-100 text-sky-900'">
       <span v-if="projectState === 'unsaved'">
-        Модель ещё не сохранена. Сохраните .skp (Файл → Сохранить) — затем рядом с файлом создадим папку su2vis/ с параметрами.
+        Модель ещё не сохранена. Сохраните .skp (Файл → Сохранить) — затем рядом с файлом создадим папку {{ projectDirLabel }}/ с параметрами.
       </span>
       <span v-else>
-        Файл «{{ settings.model_name }}»: папка su2vis/ с параметрами рядом с .skp не создана. Настройки пока общие.
+        Файл «{{ settings.model_name }}»: папка {{ projectDirLabel }}/ с параметрами рядом с .skp не создана. Настройки пока общие.
       </span>
       <button v-if="projectState === 'missing'" class="shrink-0 px-2 py-1 border rounded bg-white hover:bg-slate-50"
-        @click="createProject">Создать su2vis/</button>
+        @click="createProject">Создать {{ projectDirLabel }}/</button>
       <button class="shrink-0 px-2 py-1 border rounded bg-white hover:bg-slate-50"
         @click="recheckProject">Проверить снова</button>
       <button class="shrink-0 px-2 py-1 text-slate-500 hover:text-slate-800" @click="projectDismissed = true">Позже</button>
     </div>
     <div class="flex-1 min-h-0 overflow-hidden grid gap-3 p-3 grid-cols-[minmax(0,1fr)_300px_minmax(0,1fr)]">
-      <ReferenceCol :scenes="scenes" :selected="selected" :thumbs="thumbs" :preview="previewSize"
+      <ReferenceCol :scenes="scenes" :selected="selected" :thumbs="thumbs"
         :enabled-scenes="useScenes" :enabled-mixins="useMixins" :sketch="sketchOpts"
         :items="mixins" :settings="settings"
         @toggle="toggle" @toggle-enabled-scenes="setUseScenes" @toggle-enabled-mixins="setUseMixins"
-        @update-sketch="setSketch" @update-preview="setPreviewSize" @refresh="loadScenes" @sync-view="syncView"
+        @update-sketch="setSketch" @preview-dims="setPreviewDims" @refresh="loadScenes" @sync-view="syncView"
         @add-data="addMixinData" @add-path="addMixinPath" @toggle-mixin="toggleMixin"
         @update-settings="updateColumnSettings"
         @caption="captionMixin" @neg="negMixin" @role="roleMixin" @weight="weightMixin"
-        @move="moveMixin" @delete="deleteMixin" @transform="transformMixin" />
+        @move="moveMixin" @delete="deleteMixin" @transform="transformMixin"
+        @save-scene-boxes="saveSceneBoxes" @save-mixin-boxes="saveMixinBoxes" @delete-all="deleteAllMixins" />
       <PromptCol v-model="settings" :enhance-preview="enhancePreview"
         @save="saveSettings" @enhance-preview="previewEnhance" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
       <RenderCol :job="finalAgg" :results="finals" :busy="busy"
         :can-run="canRender" :final-label="finalLabel"
-        @render="startFinal" @stop="stopCurrent" @view="viewFinal" @delete="deleteFinal" @retry="retryFinal" />
+        @render="startFinal" @stop="stopCurrent" @view="viewFinal" @delete="deleteFinal" @retry="retryFinal"
+        @delete-all="deleteAllFinals" />
     </div>
     <StatusBar :text="statusText" :tone="statusTone" :log="jobLog" :live="liveLogText"
       @load-log="loadLog" @clear-log="clearLog" />
@@ -127,18 +129,27 @@ const modelsLoading = ref(false)
 const modelsError = ref('')
 
 const projectState = computed(() => settings.value.project_state || 'global')
+// Имя папки проекта для баннера (фактическое имя даёт project_init).
+const projectDirLabel = computed(() => {
+  const d = String(settings.value.project_dir || '')
+  const base = d.split(/[\\/]/).pop()
+  return base && base !== '.' ? base : (settings.value.model_name ? `su2vis_${settings.model_name}` : 'su2vis')
+})
 const useScenes = computed(() => settings.value.use_scenes !== false)
 const useMixins = computed(() => settings.value.use_mixins !== false)
-const previewSize = computed(() => {
-  const v = String(settings.value.preview_size || 'mid')
-  return ['min', 'mid', 'max'].includes(v) ? v : 'mid'
-})
-
-async function setPreviewSize(v) {
-  if (!['min', 'mid', 'max'].includes(String(v))) return
-  settings.value.preview_size = String(v)
-  await saveSettings()
-  await loadScenes()
+// Размер превью сцен приходит из ReferenceCol (по ширине колонки).
+// Смена размера — дебаунс-перезагрузка превью после остановки resize.
+const previewDims = ref(null)
+let previewDimsTimer = null
+function setPreviewDims(d) {
+  const w = Number(d && d.w) || 0
+  const h = Number(d && d.h) || 0
+  if (w <= 0 || h <= 0) return
+  const changed = !previewDims.value || previewDims.value.w !== w
+  previewDims.value = { w, h }
+  if (!changed) return
+  clearTimeout(previewDimsTimer)
+  previewDimsTimer = setTimeout(() => { loadScenes() }, 500)
 }
 const canRender = computed(() => {
   if (useScenes.value) return selected.value.length > 0
@@ -251,7 +262,7 @@ async function createProject() {
   if (r && r.ok && r.settings) {
     settings.value = r.settings
     projectDismissed.value = false
-    flash('Папка su2vis/ создана рядом с .skp — настройки теперь свои для этого файла')
+    flash(`Папка ${projectDirLabel.value}/ создана рядом с .skp — настройки теперь свои для этого файла`)
     loadGallery()
     loadMixins()
   } else {
@@ -270,9 +281,9 @@ async function loadScenes() {
   if (!selected.value.length && scenes.value.length) selected.value = [scenes.value[0].index]
   const next = {}
   const white = settings.value.sketch_white_bg === true
-  const preview = previewSize.value
+  const dims = previewDims.value || {}
   for (const s of scenes.value) {
-    const t = await callRuby('scenes_thumb', { index: s.index, white_bg: white, preview })
+    const t = await callRuby('scenes_thumb', { index: s.index, white_bg: white, w: dims.w, h: dims.h })
     if (t && t.thumb) next[t.index] = t.thumb
   }
   thumbs.value = next
@@ -284,7 +295,8 @@ async function loadAll() {
 }
 
 async function syncView(index) {
-  const r = await callRuby('scenes_sync_view', { index, white_bg: settings.value.sketch_white_bg === true, preview: previewSize.value })
+  const dims = previewDims.value || {}
+  const r = await callRuby('scenes_sync_view', { index, white_bg: settings.value.sketch_white_bg === true, w: dims.w, h: dims.h })
   if (r && r.thumb) thumbs.value = { ...thumbs.value, [r.index]: r.thumb }
 }
 
@@ -582,7 +594,7 @@ function activeMixins() {
     .filter((m) => m.active !== false)
     .map((m) => ({ path: m.file, file: m.file, caption: m.caption || '', caption_neg: m.caption_neg || '',
       role: m.role || 'auto', weight: Number(m.weight) || 1, apply_to: 'final', active: true,
-      crop: m.crop || null, rotation: Number(m.rotation) || 0 }))
+      crop: m.crop || null, rotation: Number(m.rotation) || 0, boxes: m.boxes || [] }))
 }
 
 async function loadMixins() {
@@ -664,6 +676,24 @@ async function transformMixin({ item, crop, rotation }) {
   if (!(res && res.ok)) flash('Не сохранил выделение: ' + ((res && res.error) || 'ошибка'))
 }
 
+async function saveSceneBoxes({ index, boxes }) {
+  const s = scenes.value.find((x) => x.index === index)
+  if (s) s.boxes = boxes
+  const res = await callRuby('scenes_boxes_save', { index, boxes })
+  if (res && res.ok) {
+    if (s) s.boxes = res.boxes || boxes
+    flash(boxes.length ? `Рамки сцены сохранены (${boxes.length}) — уйдут в промпт и на эскиз` : 'Рамки сцены убраны')
+  } else {
+    flash('Не сохранил рамки: ' + ((res && res.error) || 'ошибка'))
+  }
+}
+
+async function saveMixinBoxes({ item, boxes }) {
+  item.boxes = boxes
+  const res = await callRuby('mixins_update', { id: item.id, boxes })
+  if (!(res && res.ok)) flash('Не сохранил рамки: ' + ((res && res.error) || 'ошибка'))
+}
+
 async function moveMixin({ item, dir }) {
   const i = mixins.value.findIndex((x) => x.id === item.id)
   const j = i + dir
@@ -684,6 +714,16 @@ async function deleteMixin(m) {
   }
 }
 
+async function deleteAllMixins() {
+  const res = await callRuby('mixins_delete_all')
+  if (res && res.ok) {
+    mixins.value = []
+    flash(res.deleted ? `Удалил примесей: ${res.deleted}` : 'Примесей нет')
+  } else {
+    flash('Не удалил примеси: ' + ((res && res.error) || 'ошибка'))
+  }
+}
+
 async function deleteEntry(r, arr) {
   if (!r.file) { flash('У этой картинки нет файла на диске'); return }
   const res = await callRuby('gallery_delete', { file: r.file })
@@ -695,6 +735,16 @@ async function deleteEntry(r, arr) {
   }
 }
 const deleteFinal = (r) => deleteEntry(r, finals)
+
+async function deleteAllFinals() {
+  const res = await callRuby('gallery_delete_all')
+  if (res && res.ok) {
+    finals.value = []
+    flash(res.deleted ? `Удалил рендеров: ${res.deleted}` : 'Папка рендеров пуста')
+  } else {
+    flash('Не удалил: ' + ((res && res.error) || 'ошибка'))
+  }
+}
 
 async function clearLog() {
   await callRuby('jobs_log_clear')

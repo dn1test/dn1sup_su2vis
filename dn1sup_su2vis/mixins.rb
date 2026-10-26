@@ -8,10 +8,10 @@ require 'time'
 module Dn1sup
   module Su2vis
     # Картинки-примеси: дополнительные референсы для генерации.
-    # Лежат в <проект>/su2vis/mixins/ (legacy — рядом с out_dir):
-    # mix_<дата>_<n>.<ext> + сайдкар <файл>.json {caption, active, name}.
-    # Подпись указывает, что именно взять с картинки для примеси,
-    # при генерации дописывается к промпту.
+    # Лежат в <проект>/su2vis_<имя модели>/mixins/ (старые проекты — su2vis/,
+    # legacy — рядом с out_dir): mix_<дата>_<n>.<ext> + сайдкар <файл>.json
+    # {caption, active, name}. Подпись указывает, что именно взять с картинки
+    # для примеси, при генерации дописывается к промпту.
     module Mixins
       module_function
 
@@ -26,11 +26,11 @@ module Dn1sup
       MAX_LONG_SIDE = 1024
       MAX_BYTES = 4 * 1024 * 1024
 
-      # Папка примесей: в проекте — su2vis/mixins, иначе — <out_dir>/mixins.
+      # Папка примесей: в проекте — su2vis[_<имя>]/mixins, иначе — <out_dir>/mixins.
       # dir = :auto — по активной модели; иначе явный путь проекта/out.
       def base_dir(dir = :auto)
         d = dir == :auto ? Settings.project_dir : dir
-        if !d.nil? && File.basename(d.to_s) == Settings::PROJECT_DIRNAME
+        if !d.nil? && Settings.project_dirname?(File.basename(d.to_s))
           File.join(d.to_s, DIRNAME)
         else
           out = dir == :auto ? Settings.out_dir : dir.to_s
@@ -54,6 +54,7 @@ module Dn1sup
             'role' => meta['role'] || 'auto', 'weight' => meta['weight'] || 1.0,
             'apply_to' => meta['apply_to'] || 'both', 'pos' => meta['pos'] || 0,
             'crop' => meta['crop'], 'rotation' => meta['rotation'] || 0.0,
+            'boxes' => meta['boxes'] || [],
             'active' => meta.fetch('active', true),
             'mtime' => File.mtime(img).to_f
           }
@@ -79,7 +80,7 @@ module Dn1sup
         save_bytes(File.binread(s), File.extname(s).downcase, File.basename(s), dir)
       end
 
-      def update(id, caption: nil, active: nil, dir: :auto, role: nil, caption_neg: nil, weight: nil, apply_to: nil, pos: nil, crop: :__unset__, rotation: :__unset__)
+      def update(id, caption: nil, active: nil, dir: :auto, role: nil, caption_neg: nil, weight: nil, apply_to: nil, pos: nil, crop: :__unset__, rotation: :__unset__, boxes: :__unset__)
         d = File.expand_path(base_dir(dir).to_s)
         img = File.expand_path(File.basename(id.to_s), d)
         raise 'файл вне папки примесей' unless img.start_with?(d + File::SEPARATOR)
@@ -94,12 +95,14 @@ module Dn1sup
         meta['pos'] = pos.to_i unless pos.nil?
         meta['crop'] = norm_crop(crop) unless crop == :__unset__
         meta['rotation'] = norm_rotation(rotation) unless rotation == :__unset__
+        meta['boxes'] = norm_boxes(boxes) unless boxes == :__unset__
         write_sidecar("#{img}.json", img, meta)
         { 'id' => File.basename(img), 'file' => img, 'name' => meta['name'],
           'caption' => meta['caption'] || '', 'caption_neg' => meta['caption_neg'] || '',
           'role' => meta['role'] || 'auto', 'weight' => meta['weight'] || 1.0,
           'apply_to' => meta['apply_to'] || 'both', 'pos' => meta['pos'] || 0,
           'crop' => meta['crop'], 'rotation' => meta['rotation'] || 0.0,
+          'boxes' => meta['boxes'] || [],
           'active' => meta.fetch('active', true) }
       end
 
@@ -113,6 +116,20 @@ module Dn1sup
         FileUtils.rm_f("#{img}.json")
         Log.append('mixins_delete', 'file' => File.basename(img))
         { ok: true, id: File.basename(img) }
+      end
+
+      # Удалить все примеси (кнопка «Удалить все» в панели). Каждая — через
+      # remove; сбой одиночного файла очистку не роняет.
+      def clear(dir = :auto)
+        n = 0
+        list(dir).each do |e|
+          remove(e['id'], dir)
+          n += 1
+        rescue StandardError
+          next
+        end
+        Log.append('mixins_delete_all', 'count' => n)
+        { ok: true, deleted: n }
       end
 
       # Активные примеси для задачи: [{path, caption, caption_neg, role, weight}].
@@ -133,7 +150,8 @@ module Dn1sup
             'role' => norm_role(m['role'] || m[:role]),
             'weight' => norm_weight(m['weight'] || m[:weight]),
             'crop' => norm_crop(m['crop'] || m[:crop]),
-            'rotation' => norm_rotation(m['rotation'] || m[:rotation]) }
+            'rotation' => norm_rotation(m['rotation'] || m[:rotation]),
+            'boxes' => norm_boxes(m['boxes'] || m[:boxes]) }
         end
       end
 
@@ -169,7 +187,7 @@ module Dn1sup
                   'caption' => '', 'caption_neg' => '', 'role' => meta['role'],
                   'weight' => 1.0,
                   'apply_to' => meta['apply_to'], 'pos' => meta['pos'] || 0,
-                  'crop' => nil, 'rotation' => 0.0,
+                  'crop' => nil, 'rotation' => 0.0, 'boxes' => [],
                   'active' => true, 'mtime' => File.mtime(path).to_f }
         Log.append('mixins_add', 'file' => File.basename(path))
         entry
@@ -380,6 +398,123 @@ module Dn1sup
         cached_transform(p, raw, ext, crop_n, rot_n) || p
       end
 
+      # Путь референса для задачи с боксами: job_path (кроп/поворот/сжатие),
+      # затем дорисовать красные рамки с номерами. Координаты боксов — в
+      # системе ТРАНСФОРМИРОВАННОЙ картинки. Возвращает [путь, ок]:
+      # ок=false — рамки не нарисованы (не Windows / webp / сбой GDI+),
+      # jobs.rb тогда не включает боксы в промпт (текст без рамок на
+      # картинке только путает модель). Кэш аннотаций — по размеру+mtime
+      # исходника + хеш боксов.
+      def annotated_job_path(path, crop = nil, rotation = nil, boxes = nil)
+        p = job_path(path, crop, rotation)
+        bs = norm_boxes(boxes)
+        return [p, false] if p.empty? || bs.empty? || !File.file?(p)
+        ext = File.extname(p).downcase
+        return [p, false] unless %w[.png .jpg .jpeg].include?(ext)
+
+        st = File.stat(p) rescue (return [p, false])
+        d = shrink_cache_dir
+        return [p, false] if d.nil?
+        dst = File.join(d, "#{File.basename(p, '.*')}_#{st.size}_#{st.mtime.to_i}_#{boxes_suffix(bs)}#{ext}")
+        return [dst, true] if File.file?(dst) && File.size(dst) > 0
+
+        raw = File.binread(p) rescue (return [p, false])
+        dims = dims_from_bytes(raw, ext)
+        return [p, false] if dims.nil?
+        out = try_powershell_boxes(p, ext, dims, bs)
+        return [p, false] if out.nil? || out.empty? || oversized?(out, ext)
+
+        File.binwrite(dst, out)
+        Log.append('mixins_boxes', 'file' => File.basename(p), 'boxes' => bs.size)
+        [dst, true]
+      rescue StandardError
+        [p, false]
+      end
+
+      def boxes_suffix(bs)
+        str = bs.map { |b| "#{b['x']}-#{b['y']}-#{b['w']}-#{b['h']}-#{b['label']}" }.join(';')
+        require 'zlib'
+        Zlib.crc32(str).to_s(36)
+      end
+
+      # Нарисовать боксы через System.Drawing (GDI+ не читает webp — для
+      # него annotated_job_path заранее вернул false). Пиксельные координаты
+      # считает Ruby — в скрипт идут только целые, без парсинга дробей.
+      def try_powershell_boxes(path, ext, dims, bs)
+        return nil unless RUBY_PLATFORM =~ /mingw|mswin/
+
+        require 'tmpdir'
+        require 'timeout'
+        w, h = dims
+        long = [w, h].max
+        t = [[(long / 300.0).round, 2].max, 6].min
+        rects = bs.each_with_index.map do |b, i|
+          x0 = (b['x'] * w).round
+          y0 = (b['y'] * h).round
+          x1 = [[x0 + (b['w'] * w).round, x0 + t].max, w - 1].min
+          y1 = [[y0 + (b['h'] * h).round, y0 + t].max, h - 1].min
+          "#{x0},#{y0},#{x1},#{y1},#{i + 1}"
+        end.join(';')
+        Dir.mktmpdir do |dir|
+          src = File.join(dir, "in#{ext}")
+          dst = File.join(dir, "out#{ext}")
+          ps = File.join(dir, 'boxes.ps1')
+          File.binwrite(src, File.binread(path))
+          File.write(ps, powershell_boxes_script, encoding: 'UTF-8')
+          cmd = "powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass " \
+                "-File \"#{ps}\" -In \"#{src}\" -Out \"#{dst}\" -T #{t} -Boxes \"#{rects}\""
+          ok = Timeout.timeout(120) { run_hidden(cmd) }
+          return nil unless ok && File.file?(dst) && File.size(dst) > 0
+
+          File.binread(dst)
+        end
+      rescue StandardError
+        nil
+      end
+
+      def powershell_boxes_script
+        <<~PS
+          param([string]$In, [string]$Out, [int]$T = 3, [string]$Boxes = '')
+          Add-Type -AssemblyName System.Drawing
+          $s = [System.Drawing.Bitmap]::FromFile($In)
+          try {
+            $g = [System.Drawing.Graphics]::FromImage($s)
+            try {
+              $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(222, 30, 38), 1)
+              $bg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+              $fg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(20, 20, 20))
+              $font = New-Object System.Drawing.Font('Arial', [float]([Math]::Max(10, [int][Math]::Round([Math]::Max($s.Width, $s.Height) / 25.0))), [System.Drawing.FontStyle]::Bold)
+              foreach ($part in $Boxes.Split(';')) {
+                if ($part -eq '') { continue }
+                $c = $part.Split(',')
+                if ($c.Count -lt 5) { continue }
+                $x0 = [int]$c[0]; $y0 = [int]$c[1]; $x1 = [int]$c[2]; $y1 = [int]$c[3]; $num = $c[4]
+                for ($k = 0; $k -lt $T; $k++) {
+                  $g.DrawRectangle($pen, $x0 + $k, $y0 + $k, ($x1 - $x0 - 2 * $k), ($y1 - $y0 - 2 * $k))
+                }
+                $sz = $g.MeasureString($num, $font)
+                $bw = [int][Math]::Ceiling($sz.Width) + 4
+                $bh = [int][Math]::Ceiling($sz.Height)
+                $bx = [Math]::Max(0, [Math]::Min($x0, $s.Width - $bw - 1))
+                $by = [Math]::Max(0, [Math]::Min($y0, $s.Height - $bh - 1))
+                $g.FillRectangle($bg, $bx, $by, $bw, $bh)
+                $g.DrawString($num, $font, $fg, [float]($bx + 2), [float]$by)
+              }
+            } finally { $g.Dispose() }
+            $e = [System.IO.Path]::GetExtension($Out).ToLower()
+            if ($e -eq '.png') {
+              $s.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
+            } else {
+              $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+              $pp = New-Object System.Drawing.Imaging.EncoderParameters(1)
+              $pp.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]90)
+              $s.Save($Out, $codec[0], $pp)
+              $pp.Dispose()
+            }
+          } finally { $s.Dispose() }
+        PS
+      end
+
       def cached_shrink(path, raw, ext)
         cached_transform(path, raw, ext, nil, 0.0)
       end
@@ -556,6 +691,7 @@ module Dn1sup
                 'pos' => (m['pos'] || 0).to_i,
                 'crop' => m['crop'],
                 'rotation' => m['rotation'] || 0.0,
+                'boxes' => m['boxes'] || [],
                 'active' => m.fetch('active', true) ? true : false }
         File.write(sp.to_s, JSON.pretty_generate(doc), encoding: 'UTF-8')
         doc
@@ -625,8 +761,15 @@ module Dn1sup
         h['pos'] = (h['pos'] || 0).to_i
         h['crop'] = norm_crop(h['crop'])
         h['rotation'] = norm_rotation(h['rotation'])
+        h['boxes'] = norm_boxes(h['boxes'])
         h['active'] = h.fetch('active', true) ? true : false
         h
+      end
+
+      # Боксы с подписями: единая нормализация из Scenes (загружается
+      # раньше mixins в main.rb, чистая функция — работает и под стабом).
+      def norm_boxes(v)
+        Scenes.norm_boxes(v)
       end
 
       def unique_path(dir, base, ext)

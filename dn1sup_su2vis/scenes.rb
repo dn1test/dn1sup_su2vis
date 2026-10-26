@@ -3,6 +3,7 @@
 require 'sketchup.rb'
 require 'base64'
 require 'fileutils'
+require 'json'
 require 'tmpdir'
 require 'zlib'
 
@@ -24,8 +25,77 @@ module Dn1sup
         pages = model.pages
         current = pages.selected_page
         pages.map.with_index do |p, i|
-          { name: p.name, index: i, current: p == current }
+          { name: p.name, index: i, current: p == current, boxes: norm_boxes(read_boxes_json(p)) }
         end
+      end
+
+      # Боксы с описанием (рамки на эскизе): атрибут страницы — переживают
+      # переупорядочивание сцен, в отличие от индексных хешей.
+      ATTR_DICT = 'dn1sup_su2vis'.freeze
+      BOXES_MAX = 12
+
+      # Нормализация списка боксов [{x,y,w,h,label}] — координаты 0..1,
+      # label ≤ 200 симв, максимум BOXES_MAX. Чистая функция — тестируется.
+      def norm_boxes(arr)
+        return [] unless arr.is_a?(Array)
+        out = []
+        arr.each do |b|
+          next unless b.is_a?(Hash)
+          x = (b['x'] || b[:x] || 0).to_f
+          y = (b['y'] || b[:y] || 0).to_f
+          w = (b['w'] || b[:w] || 0).to_f
+          h = (b['h'] || b[:h] || 0).to_f
+          next if w <= 0.005 || h <= 0.005
+          x = [[x, 0.0].max, 0.99].min
+          y = [[y, 0.0].max, 0.99].min
+          w = [[w, 0.01].max, 1.0 - x].min
+          h = [[h, 0.01].max, 1.0 - y].min
+          next if w < 0.01 || h < 0.01
+          out << { 'x' => x.round(4), 'y' => y.round(4), 'w' => w.round(4), 'h' => h.round(4),
+                   'label' => (b['label'] || b[:label]).to_s.strip[0, 200] }
+          break if out.size >= BOXES_MAX
+        end
+        out
+      rescue StandardError
+        []
+      end
+
+      def read_boxes_json(page)
+        raw = page.get_attribute(ATTR_DICT, 'boxes_json', '')
+        JSON.parse(raw.to_s)
+      rescue StandardError
+        []
+      end
+
+      def boxes(index)
+        model = Sketchup.active_model
+        return [] unless model
+        page = model.pages[index.to_i]
+        return [] unless page
+        norm_boxes(read_boxes_json(page))
+      end
+
+      def save_boxes(index, boxes)
+        model = Sketchup.active_model
+        raise 'нет активной модели' unless model
+        page = model.pages[index.to_i]
+        raise "сцена #{index} не найдена" unless page
+        bs = norm_boxes(boxes)
+        page.set_attribute(ATTR_DICT, 'boxes_json', JSON.generate(bs))
+        bs
+      end
+
+      # Текст про пронумерованные рамки на эскизе: только боксы с подписью,
+      # нумерация — по позиции в массиве (совпадает с бейджами на картинке).
+      def boxes_prompt(boxes)
+        bs = norm_boxes(boxes)
+        lines = bs.each_with_index.filter_map do |b, i|
+          lab = b['label'].to_s.strip
+          next if lab.empty?
+          "Red box #{i + 1}: #{lab}."
+        end
+        return '' if lines.empty?
+        "The sketch has numbered red rectangles marking areas:\n#{lines.join("\n")}"
       end
 
       # Скриншот одной сцены по индексу в точном размере w x h (пресеты 4:3).
@@ -192,25 +262,21 @@ module Dn1sup
 
       # Превью для списка сцен (4:3, base64 data-url): тонкие линии
       # без силуэтов и без размеров — профили ни к чему.
-      # Три заготовки по ширине: мин 400 / сред 800 / макс 1200.
-      PREVIEW_SIZES = {
-        'min' => [400, 300],
-        'mid' => [800, 600],
-        'max' => [1_200, 900]
-      }.freeze
-      PREVIEW_DEFAULT = 'mid'
-
-      # Совместимость: старая тумба 170x128 убрана, дефолт — сред 800x600.
+      # Размер считает фронт по ширине колонки; тут только санитизация:
+      # 0/мусор → дефолт 800x600, сверху кламп THUMB_MAX.
       THUMB_W = 800
       THUMB_H = 600
+      THUMB_MAX = 1_600
 
-      def preview_dims(key)
-        PREVIEW_SIZES.fetch(key.to_s, PREVIEW_SIZES[PREVIEW_DEFAULT])
+      def thumb_dim(v, deft)
+        v = v.to_i
+        v = deft if v <= 0
+        v > THUMB_MAX ? THUMB_MAX : v
       end
 
       def thumbnail(index, w = nil, h = nil, white_bg: false)
-        w = w.to_i > 0 ? w.to_i : THUMB_W
-        h = h.to_i > 0 ? h.to_i : THUMB_H
+        w = thumb_dim(w, THUMB_W)
+        h = thumb_dim(h, THUMB_H)
         path = capture(index, w, h, thin_lines: true, white_bg: white_bg)
         "data:image/png;base64,#{Base64.strict_encode64(File.binread(path))}"
       rescue StandardError
@@ -451,6 +517,136 @@ module Dn1sup
       def png_chunk(type, data)
         d = data.b
         [d.bytesize].pack('N') + type + d + [Zlib.crc32(type + d)].pack('N')
+      end
+
+      # ── Рамки с номерами поверх эскиза ──────────────────────────────
+      # Один цвет (красный) + белый бейдж с номером; нумерация — по порядку
+      # массива боксов и совпадает с текстом boxes_prompt.
+
+      BOX_COLOR = [222, 30, 38].freeze
+      BADGE_BG = [255, 255, 255].freeze
+      BADGE_FG = [20, 20, 20].freeze
+      # Цифры 3x5, старший бит — левая колонка.
+      DIGITS = [
+        [0b111, 0b101, 0b101, 0b101, 0b111], # 0
+        [0b010, 0b110, 0b010, 0b010, 0b111], # 1
+        [0b111, 0b001, 0b111, 0b100, 0b111], # 2
+        [0b111, 0b001, 0b011, 0b001, 0b111], # 3
+        [0b101, 0b101, 0b111, 0b001, 0b001], # 4
+        [0b111, 0b100, 0b111, 0b001, 0b111], # 5
+        [0b111, 0b100, 0b111, 0b101, 0b111], # 6
+        [0b111, 0b001, 0b010, 0b010, 0b010], # 7
+        [0b111, 0b101, 0b111, 0b101, 0b111], # 8
+        [0b111, 0b101, 0b111, 0b001, 0b111]  # 9
+      ].freeze
+
+      # Сборка PNG из пикселей png_pixels (фильтр None на строках). Чистая.
+      def encode_png(pic)
+        raw = +''.b
+        pic[:rows].each do |row|
+          raw << 0.chr
+          raw << row.pack('C*')
+        end
+        sig = "\x89PNG\r\n\x1A\n".b
+        ihdr = [pic[:w], pic[:h], 8, pic[:ctype], 0, 0, 0].pack('NNC5')
+        sig + png_chunk('IHDR', ihdr) + png_chunk('IDAT', Zlib.deflate(raw)) + png_chunk('IEND', '')
+      end
+
+      # Нарисовать боксы на PNG-байтах: рамки + бейджи с номерами.
+      # nil — не разобрали PNG / нет боксов. Чистая функция — тестируется.
+      def draw_boxes_png(bytes, boxes)
+        pic = png_pixels(bytes)
+        return nil unless pic
+        bs = norm_boxes(boxes)
+        return nil if bs.empty?
+        bs.each_with_index { |b, i| draw_one_box(pic, b, i + 1) }
+        encode_png(pic)
+      end
+
+      def draw_one_box(pic, b, num)
+        w, h = pic[:w], pic[:h]
+        t = [[([w, h].max / 300.0).round, 2].max, 6].min
+        x0 = (b['x'] * w).round
+        y0 = (b['y'] * h).round
+        x1 = [[x0 + (b['w'] * w).round, x0 + t].max, w - 1].min
+        y1 = [[y0 + (b['h'] * h).round, y0 + t].max, h - 1].min
+        fill_rect(pic, x0, y0, x1, y0 + t - 1, BOX_COLOR)
+        fill_rect(pic, x0, y1 - t + 1, x1, y1, BOX_COLOR)
+        fill_rect(pic, x0, y0, x0 + t - 1, y1, BOX_COLOR)
+        fill_rect(pic, x1 - t + 1, y0, x1, y1, BOX_COLOR)
+        draw_badge(pic, x0, y0, num)
+      end
+
+      def fill_rect(pic, x0, y0, x1, y1, color)
+        x0 = [[x0, 0].max, pic[:w] - 1].min
+        x1 = [[x1, 0].max, pic[:w] - 1].min
+        y0 = [[y0, 0].max, pic[:h] - 1].min
+        y1 = [[y1, 0].max, pic[:h] - 1].min
+        (y0..y1).each do |yy|
+          row = pic[:rows][yy]
+          (x0..x1).each { |xx| set_px(row, xx * pic[:ch], color, pic[:ch]) }
+        end
+      end
+
+      def set_px(row, off, color, ch)
+        if ch == 1
+          row[off] = (color[0] * 299 + color[1] * 587 + color[2] * 114) / 1000
+        elsif ch == 3
+          row[off] = color[0]
+          row[off + 1] = color[1]
+          row[off + 2] = color[2]
+        else
+          row[off] = color[0]
+          row[off + 1] = color[1]
+          row[off + 2] = color[2]
+          row[off + 3] = 255
+        end
+      end
+
+      def draw_badge(pic, bx, by, num)
+        w, h = pic[:w], pic[:h]
+        ds = num.to_s.chars.map(&:to_i)
+        tw = ds.size * 4 - 1
+        s = [[([w, h].max / 200.0).round, 2].max, 8].min
+        bw = (tw + 2) * s
+        bh = 7 * s
+        px = [[bx, 0].max, w - bw - 1].min
+        py = [[by, 0].max, h - bh - 1].min
+        fill_rect(pic, px, py, px + bw - 1, py + bh - 1, BADGE_BG)
+        ds.each_with_index do |d, di|
+          glyph = DIGITS[d]
+          gx = px + (1 + di * 4) * s
+          gy = py + s
+          5.times do |r|
+            3.times do |c|
+              next unless ((glyph[r] >> (2 - c)) & 1) == 1
+              fill_rect(pic, gx + c * s, gy + r * s, gx + c * s + s - 1, gy + r * s + s - 1, BADGE_FG)
+            end
+          end
+        end
+      end
+
+      # Аннотированная копия эскиза: боксы поверх PNG. Результат в tmp,
+      # кэш по crc32 координат; сбой — исходный путь (рамки исчезнут,
+      # но задача не падает).
+      def annotated_sketch(path, boxes)
+        p = path.to_s
+        return p if p.empty?
+        bs = norm_boxes(boxes)
+        return p if bs.empty?
+        dst = File.join(tmp_dir, "sketch_#{File.basename(p, '.*')}_#{boxes_key(bs)}.png")
+        return dst if File.file?(dst) && File.size(dst) > 0
+        out = draw_boxes_png(File.binread(p), bs)
+        return p if out.nil?
+        File.binwrite(dst, out)
+        dst
+      rescue StandardError
+        p
+      end
+
+      def boxes_key(bs)
+        str = bs.map { |b| "#{b['x']},#{b['y']},#{b['w']},#{b['h']},#{b['label']}" }.join(';')
+        Zlib.crc32(str).to_s(36)
       end
     end
   end

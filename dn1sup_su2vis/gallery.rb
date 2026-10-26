@@ -67,6 +67,23 @@ module Dn1sup
         { ok: true, file: img }
       end
 
+      # Удалить всё из галереи (кнопка «Удалить все» в панели): только то,
+      # что отдаёт list (финалы с сайдкарами и одиночные картинки). preview_*
+      # и посторонние файлы (su2vis.log) list не отдаёт — не трогаются.
+      def clear(dir)
+        d = File.expand_path(dir.to_s)
+        n = 0
+        list(d).each do |e|
+          img = File.expand_path(File.basename(e['file'].to_s), d)
+          next unless img.start_with?(d + File::SEPARATOR) && File.file?(img)
+          FileUtils.rm_f(img)
+          FileUtils.rm_f("#{img}.json")
+          n += 1
+        end
+        Log.append('gallery_delete_all', 'count' => n) if n.positive?
+        { ok: true, deleted: n }
+      end
+
       def write_sidecar(path, kind, meta)
         m = meta.is_a?(Hash) ? meta : {}
         doc = {

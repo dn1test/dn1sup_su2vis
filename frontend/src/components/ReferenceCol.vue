@@ -16,16 +16,9 @@
           использовать сцены (выкл — только промпт/примеси)
         </label>
       </div>
-      <div class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-2" :class="!enabledScenes ? 'opacity-50 pointer-events-none' : ''">
+      <div class="flex-1 min-h-0 overflow-y-auto scroll-slim p-3 space-y-2" :class="!enabledScenes ? 'opacity-50 pointer-events-none' : ''" :ref="setListEl">
       <div class="flex gap-1">
         <button class="flex-1 px-2 py-1 text-xs border rounded hover:bg-slate-100" @click="emit('refresh')">Обновить</button>
-      </div>
-      <div class="flex items-center gap-1">
-        <span class="text-xs text-slate-500">Превью:</span>
-        <button v-for="p in previewSizes" :key="p.id" @click="emit('update-preview', p.id)"
-          class="flex-1 px-1 py-1 text-xs border rounded"
-          :class="preview === p.id ? 'bg-slate-900 text-white' : 'hover:bg-slate-100'"
-          :title="p.title">{{ p.label }}</button>
       </div>
       <div v-if="!scenes.length" class="text-xs text-slate-500">Нет сцен. Создайте сцены в модели → «Обновить».</div>
       <div v-else class="text-xs text-slate-500">Выберите одну сцену. Эскиз = сохранённый вид сцены. Покрутили камеру — жмите ⟳ на сцене.</div>
@@ -35,10 +28,21 @@
         <div class="flex items-center gap-2 px-2 py-1">
           <input type="radio" name="su2vis-scene" :checked="selected.includes(s.index)" @change="emit('toggle', s.index)" />
           <span class="truncate text-xs font-medium flex-1">{{ s.name }}</span>
+          <span v-if="(s.boxes || []).length" class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800"
+            title="Рамки с описанием уйдут в промпт">{{ (s.boxes || []).length }} рамок</span>
           <button class="px-1.5 py-0.5 text-xs border rounded hover:bg-slate-100" title="Записать текущий вид окна в сцену"
             @click.prevent="emit('sync-view', s.index)">⟳</button>
+          <button class="px-1.5 py-0.5 text-xs border rounded hover:bg-slate-100" title="Рамки с описанием — уйдут в промпт, нарисуются на эскизе"
+            @click.prevent="openSceneBoxes(s)">▣</button>
         </div>
-        <img v-if="thumbs[s.index]" :src="thumbs[s.index]" class="w-full aspect-[4/3] object-cover bg-slate-200" />
+        <div v-if="thumbs[s.index]" class="relative">
+          <img :src="thumbs[s.index]" class="w-full aspect-[4/3] object-cover bg-slate-200" />
+          <template v-for="(b, bi) in (s.boxes || [])" :key="'sb' + bi">
+            <div class="absolute border-2 border-red-500 bg-red-500/10 pointer-events-none" :style="boxStyle(b)"></div>
+            <div class="absolute min-w-4 h-4 px-0.5 rounded-sm bg-white border border-red-500 text-red-600 text-[10px] font-bold flex items-center justify-center pointer-events-none"
+              :style="badgeStyle(b)">{{ bi + 1 }}</div>
+          </template>
+        </div>
         <div v-else class="w-full aspect-[4/3] bg-slate-200 flex items-center justify-center text-xs text-slate-500">вид сцены</div>
         </label>
       </div>
@@ -59,6 +63,12 @@
           </label>
           <button class="px-3 py-2 rounded border text-xs hover:bg-slate-100" title="Выбрать файл с диска через SketchUp"
             @click="emit('add-path')">Из файла…</button>
+          <button :disabled="!items.length" @click="askDeleteAll"
+            class="px-3 py-2 rounded border text-xs disabled:opacity-40"
+            :class="confirmAll ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100' : 'hover:bg-slate-100'"
+            :title="confirmAll ? 'Ещё раз — удалит все файлы примесей с диска' : 'Удалить все примеси (файлы с диска)'">
+            {{ confirmAll ? 'Точно?' : 'Удалить все' }}
+          </button>
         </div>
         <label class="block">
           <span class="text-xs text-slate-500">Что брать по умолчанию (новые карточки)</span>
@@ -90,8 +100,12 @@
           <div class="px-2 pt-1 flex items-center gap-1">
             <button class="flex-1 px-2 py-1 text-xs border rounded hover:bg-slate-100" :disabled="!m.data_url"
               title="Выделить мышкой часть картинки и повернуть (правит оригинал)" @click="editing = m">Выделить / повернуть…</button>
+            <button class="px-2 py-1 text-xs border rounded hover:bg-slate-100 disabled:opacity-30" :disabled="!m.data_url"
+              title="Рамки с подписями на референсе — уйдут в промпт" @click="openMixinBoxes(m)">Рамки…</button>
             <span v-if="m.crop" class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900" title="В генерацию уйдёт только выделение">выделение</span>
             <span v-if="numRot(m.rotation) !== 0" class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-900" :title="'Поворот ' + fmtRot(m.rotation) + '°'">{{ fmtRot(m.rotation) }}°</span>
+            <span v-if="(m.boxes || []).length" class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-800"
+              title="Рамки с подписями уйдут в промпт">{{ (m.boxes || []).length }}</span>
           </div>
           <div class="p-2 space-y-1">
             <div class="flex items-center gap-1">
@@ -165,13 +179,20 @@
     <MixinCropEditor v-if="editing" :src="editing.data_url" :name="editing.name || editing.id"
       :crop="editing.crop || null" :rotation="editing.rotation || 0"
       @cancel="editing = null" @save="onEditorSave" />
+    <BoxEditor v-if="boxScene !== null" :src="thumbs[boxScene] || ''" :name="sceneName(boxScene)"
+      :boxes="sceneBoxes(boxScene)"
+      @cancel="boxScene = null" @save="onSceneBoxesSave" />
+    <BoxEditor v-if="boxMixin" :src="boxMixinSrc" :name="boxMixin.name || boxMixin.id"
+      :boxes="boxMixin.boxes || []"
+      @cancel="boxMixin = null" @save="onMixinBoxesSave" />
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import MixinCropEditor from './MixinCropEditor.vue'
 import MixinThumb from './MixinThumb.vue'
+import BoxEditor from './BoxEditor.vue'
 const active = ref('scenes')
 const tabs = [
   { id: 'scenes', label: 'Сцены' },
@@ -182,7 +203,6 @@ const props = defineProps({
   scenes: { type: Array, default: () => [] },
   selected: { type: Array, default: () => [] },
   thumbs: { type: Object, default: () => ({}) },
-  preview: { type: String, default: 'mid' },
   enabledScenes: { type: Boolean, default: true },
   enabledMixins: { type: Boolean, default: true },
   sketch: { type: Object, default: () => ({ source: 'hd', preset: '1024x768', thin_lines: true, hide_dims: true, autocrop: false, white_bg: false }) },
@@ -190,13 +210,51 @@ const props = defineProps({
   settings: { type: Object, default: () => ({}) }
 })
 const emit = defineEmits(['toggle', 'refresh', 'sync-view', 'toggle-enabled-scenes', 'toggle-enabled-mixins',
-  'update-sketch', 'update-preview', 'add-data', 'add-path', 'toggle-mixin', 'caption', 'neg', 'role', 'weight', 'move', 'delete',
-  'transform', 'update-settings'])
-const previewSizes = [
-  { id: 'min', label: 'Мин 400', title: 'Превью 400×300 (4:3)' },
-  { id: 'mid', label: 'Сред 800', title: 'Превью 800×600 (4:3)' },
-  { id: 'max', label: 'Макс 1200', title: 'Превью 1200×900 (4:3)' }
-]
+  'update-sketch', 'preview-dims', 'add-data', 'add-path', 'toggle-mixin', 'caption', 'neg', 'role', 'weight', 'move', 'delete',
+  'transform', 'update-settings', 'save-scene-boxes', 'save-mixin-boxes', 'delete-all'])
+
+// Подтверждение удаления всех примесей в самой кнопке: нативный confirm()
+// в HtmlDialog недоступен.
+const confirmAll = ref(false)
+let confirmTimer = null
+function askDeleteAll() {
+  clearTimeout(confirmTimer)
+  if (!confirmAll.value) {
+    confirmAll.value = true
+    confirmTimer = setTimeout(() => { confirmAll.value = false }, 3000)
+    return
+  }
+  confirmAll.value = false
+  emit('delete-all')
+}
+onBeforeUnmount(() => clearTimeout(confirmTimer))
+
+// Разрешение превью считаем по ширине колонки: пиксели экрана
+// (карточка × devicePixelRatio), кламп 320..1600, шаг 50, высота 4:3.
+const PREVIEW_MIN_W = 320
+const PREVIEW_MAX_W = 1600
+const PREVIEW_STEP = 50
+let listEl = null
+let listObserver = null
+let lastPreviewW = 0
+function setListEl(el) {
+  if (listObserver) { listObserver.disconnect(); listObserver = null }
+  listEl = el || null
+  if (!listEl) return
+  listObserver = new ResizeObserver(() => {
+    if (!listEl) return
+    const cardW = listEl.clientWidth - 24 // p-3: паддинги по 12px
+    if (cardW <= 0) return
+    const raw = Math.ceil(cardW * (Number(window.devicePixelRatio) || 1))
+    const w = Math.min(PREVIEW_MAX_W, Math.max(PREVIEW_MIN_W, Math.ceil(raw / PREVIEW_STEP) * PREVIEW_STEP))
+    if (w === lastPreviewW) return
+    lastPreviewW = w
+    emit('preview-dims', { w, h: Math.round((w * 3) / 4) })
+  })
+  listObserver.observe(listEl)
+}
+onBeforeUnmount(() => { if (listObserver) listObserver.disconnect() })
+
 const sketchPresets = ['800x600', '1024x768', '1280x960']
 function upd(key, value) {
   emit('update-sketch', { ...props.sketch, [key]: value })
@@ -220,6 +278,79 @@ function cropStyle(c) {
     width: ((Number(c.w) || 0) * 100) + '%',
     height: ((Number(c.h) || 0) * 100) + '%'
   }
+}
+// ── Рамки с описанием (сцены и примеси) ─────────────────────────────
+function boxStyle(b) {
+  if (!b) return {}
+  return {
+    left: ((Number(b.x) || 0) * 100) + '%',
+    top: ((Number(b.y) || 0) * 100) + '%',
+    width: ((Number(b.w) || 0) * 100) + '%',
+    height: ((Number(b.h) || 0) * 100) + '%'
+  }
+}
+function badgeStyle(b) {
+  return { left: ((Number(b.x) || 0) * 100) + '%', top: ((Number(b.y) || 0) * 100) + '%' }
+}
+const boxScene = ref(null)
+const boxMixin = ref(null)
+const boxMixinSrc = ref('')
+function sceneByIndex(i) {
+  return props.scenes.find((s) => s.index === i) || null
+}
+function sceneName(i) {
+  return (sceneByIndex(i) || {}).name || ('Сцена #' + i)
+}
+function sceneBoxes(i) {
+  return (sceneByIndex(i) || {}).boxes || []
+}
+function openSceneBoxes(s) {
+  if (!props.thumbs[s.index]) return
+  boxScene.value = s.index
+}
+function onSceneBoxesSave({ index, boxes }) {
+  boxScene.value = null
+  emit('save-scene-boxes', { index, boxes })
+}
+async function openMixinBoxes(m) {
+  boxMixinSrc.value = await transformedUrl(m)
+  boxMixin.value = m
+}
+function onMixinBoxesSave({ item, boxes }) {
+  boxMixin.value = null
+  emit('save-mixin-boxes', { item, boxes })
+}
+// Рамки примеси живут в системе координат картинки ПОСЛЕ crop+rotation
+// (так же рисуются на job-копии в Ruby). Готовим такой data-url на canvas.
+function transformedUrl(m) {
+  return new Promise((resolve) => {
+    const rot = numRot(m.rotation)
+    if (!m.data_url || (!m.crop && rot === 0)) { resolve(m.data_url || ''); return }
+    const img = new Image()
+    img.onload = () => {
+      const c = m.crop || { x: 0, y: 0, w: 1, h: 1 }
+      const sx = Math.round((Number(c.x) || 0) * img.naturalWidth)
+      const sy = Math.round((Number(c.y) || 0) * img.naturalHeight)
+      const sw = Math.max(1, Math.round((Number(c.w) || 1) * img.naturalWidth))
+      const sh = Math.max(1, Math.round((Number(c.h) || 1) * img.naturalHeight))
+      const ang = (Number(m.rotation) || 0) * Math.PI / 180
+      const cos = Math.abs(Math.cos(ang))
+      const sin = Math.abs(Math.sin(ang))
+      const dw = Math.max(1, Math.round(sw * cos + sh * sin))
+      const dh = Math.max(1, Math.round(sw * sin + sh * cos))
+      const cv = document.createElement('canvas')
+      cv.width = dw
+      cv.height = dh
+      const ctx = cv.getContext('2d')
+      if (!ctx) { resolve(m.data_url || ''); return }
+      ctx.translate(dw / 2, dh / 2)
+      ctx.rotate(ang)
+      ctx.drawImage(img, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh)
+      try { resolve(cv.toDataURL('image/png')) } catch { resolve(m.data_url || '') }
+    }
+    img.onerror = () => resolve(m.data_url || '')
+    img.src = m.data_url
+  })
 }
 function numRot(r) {
   const f = Number(r)

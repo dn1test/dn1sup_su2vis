@@ -10,7 +10,7 @@ end
 
 module Dn1sup
   module Su2vis
-    VERSION = '0.17.3'.freeze
+    VERSION = '0.20.0'.freeze
 
     ID       = 'dn1sup_su2vis'.freeze
     REPO     = 'dn1test/dn1sup_su2vis'.freeze
@@ -42,8 +42,17 @@ module Dn1sup
       cmd = UI::Command.new('SU2Vis — эскиз в фото') { Panel.show }.tap do |c|
         c.tooltip = 'SU2Vis: генерация фото из сцен'
         c.status_bar_text = 'Выбор сцен, превью малого разрешения, финал с тем же seed'
-        icon = File.join(__dir__, 'resources', 'panel.svg')
-        c.small_icon = c.large_icon = icon if File.exist?(icon)
+        icons = File.join(__dir__, 'icons')
+        svg = File.join(icons, 'su2vis.svg')
+        if File.exist?(svg) && Sketchup.version.to_i >= 16
+          c.small_icon = svg
+          c.large_icon = svg
+        else
+          small = File.join(icons, 'su2vis_16.png')
+          large = File.join(icons, 'su2vis_24.png')
+          c.small_icon = small if File.exist?(small)
+          c.large_icon = large if File.exist?(large)
+        end
       end
 
       dn1sup_menu = Dn1sup.common_menu

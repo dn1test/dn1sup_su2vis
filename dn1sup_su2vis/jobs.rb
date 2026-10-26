@@ -159,9 +159,9 @@ module Dn1sup
             raise "студия недоступна (#{url}) — проверь, что `unsloth studio` запущена, и повтори"
           end
           job.progress = { done: done_steps, total: total_steps, scene: idx }
-          sketch =
+          sketch, boxes_prompt =
             if idx.nil?
-              nil
+              [nil, '']
             else
               cap = (job.params['sketches'] || {})[idx.to_s] || (job.params['sketches'] || {})[idx]
               # Фолбэк (эскиз не снят на главном потоке): те же параметры
@@ -174,7 +174,10 @@ module Dn1sup
                 cap = Scenes.maybe_autocrop(cap, s['sketch_autocrop'] == true ||
                                                  s['sketch_autocrop'].to_s == 'true')
               end
-              cap.to_s
+              # Рамки с описанием сцены: копия с нарисованными красными
+              # боксами уходит в модель, исходный эскиз остаётся чистым.
+              sboxes = Scenes.boxes(idx)
+              [Scenes.annotated_sketch(cap, sboxes), Scenes.boxes_prompt(sboxes)]
             end
           # Без эскиза пропорций нет — берём из общих настроек финала.
           w0, h0 = sketch ? (Scenes.dims(sketch) || [1024, 1024]) : default_dims(s)
@@ -184,9 +187,14 @@ module Dn1sup
           random_seeds = s['preview_random_seeds']
           # Примеси: активные референсы + подписи -> дописка к промпту.
           mix = Mixins.active_for_job(job.params['mixins'] || s['mixins'], 'final')
-          # Большие референсы — через ужатые копии (студия режет > 4096px).
-          mix_paths = mix.map { |m| Mixins.job_path(m['path'], m['crop'], m['rotation']) }
-          mp = Client.mixins_prompt(mix)
+          # Большие референсы — через ужатые копии (студия режет > 4096px),
+          # с боксами — ещё и с нарисованными рамками.
+          mix_refs = mix.map do |m|
+            p2, boxes_ok = Mixins.annotated_job_path(m['path'], m['crop'], m['rotation'], m['boxes'])
+            m.merge('job_path' => p2, 'boxes_ok' => boxes_ok)
+          end
+          mix_paths = mix_refs.map { |m| m['job_path'] }
+          mp = Client.mixins_prompt(mix_refs)
           check_cancel!(job)
           run_seed = random_seeds == true || random_seeds.to_s == 'true' ? Random.new_seed % 2_147_483_647 : base_seed
           batch_seeds = batch_seed_list(run_seed, batch, random_seeds)
@@ -201,7 +209,7 @@ module Dn1sup
             strength: gen_strength, seed: batch_seeds.first,
             allow_oversized: s['allow_oversized'] == true || s['allow_oversized'].to_s == 'true',
             batch_size: batch, seeds: batch_seeds,
-            extra_references: mix_paths, mixins_prompt: mp,
+            extra_references: mix_paths, mixins_prompt: mp, boxes_prompt: boxes_prompt,
             http_id: job.id, geometry_lock: s.fetch('geometry_lock', true)
           )
           gen_s = (Time.now - t_gen).round(1)
@@ -211,7 +219,10 @@ module Dn1sup
                       workflow: meta['workflow'] }
             gmeta = gallery_meta(s, idx, vsed, i, gw, gh, false)
             ext = (s['ext'] || 'jpg').to_s.sub(/^\./, '')
-            entry[:file] = File.join(out_dir, expand_name(s, idx, vsed) + ".#{ext}")
+            # Не перезаписываем старые рендеры: коллизия по файлу или сайдкару
+            # даёт суффикс _2, _3… (иначе binwrite молча затирал бы прошлый
+            # файл, который пользователь не удалял).
+            entry[:file] = Gallery.unique_path(out_dir, expand_name(s, idx, vsed), ".#{ext}")
             File.binwrite(entry[:file], bytes)
             # Файл обязан лежать на диске: иначе вместо фантомной карточки
             # с вечной «загрузкой» задача сразу падает с понятной ошибкой.

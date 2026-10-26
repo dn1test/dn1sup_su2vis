@@ -363,8 +363,11 @@ module Dn1sup
       end
 
       # Дописка к промпту из подписей примесей: что взять с каждого референса.
-      # refs: [{path, caption, caption_neg, role, weight}] — нумерация с 2 (1 — основной эскиз).
-      # role: auto/style/material/light/object; weight 0.1..2.0 — подсказка важности.
+      # refs: [{path, caption, caption_neg, role, weight, boxes, boxes_ok}] —
+      # нумерация с 2 (1 — основной эскиз). role: auto/style/material/light/
+      # object; weight 0.1..2.0 — подсказка важности. boxes — рамки с
+      # подписями на референсе (нумерация совпадает с нарисованными);
+      # boxes_ok: false — рамки не доехали до картинки, текст не шлём.
       def mixins_prompt(refs)
         lines = []
         Array(refs).each_with_index do |m, i|
@@ -375,14 +378,31 @@ module Dn1sup
           role = 'auto' unless Mixins::ROLES.include?(role)
           w = (m['weight'] || m[:weight] || 1.0).to_f
           w = 1.0 if w.zero?
-          next if cap.empty? && neg.empty? && role == 'auto'
+          bline = boxes_sentence(m, i + 2)
+          next if cap.empty? && neg.empty? && role == 'auto' && bline.empty?
           n = i + 2
           base = cap.empty? ? role_label(role, n) : role_sentence(role, n, cap)
           base = "#{base} (importance #{format_weight(w)})" if (w - 1.0).abs >= 0.05
           base = "#{base} Do NOT take from reference image #{n}: #{neg}." unless neg.empty?
+          base = "#{base} #{bline}" unless bline.empty?
           lines << base
         end
         lines.empty? ? '' : "Additional references:\n#{lines.join("\n")}"
+      end
+
+      # «Reference image N: red box 1 — подпись; red box 2 — подпись.»
+      # Пусто — боксов нет, они не нормализовались или не попали на картинку.
+      def boxes_sentence(m, n)
+        return '' if m['boxes_ok'] == false
+        bs = Mixins.norm_boxes(m['boxes'] || m[:boxes])
+        return '' if bs.empty?
+        parts = bs.each_with_index.filter_map do |b, i|
+          lab = b['label'].to_s.strip
+          next if lab.empty?
+          "red box #{i + 1} — #{lab}"
+        end
+        return '' if parts.empty?
+        "Reference image #{n}: #{parts.join('; ')}."
       end
 
       def role_sentence(role, n, cap)
@@ -447,7 +467,7 @@ module Dn1sup
       def generate(url, key, sketch_path, prompt:, width:, height:, steps: 16, guidance: 1.0,
                    strength: 1.0, seed: nil, allow_oversized: true, batch_size: 1,
                    seeds: nil, workflow: nil,
-                   extra_references: nil, mixins_prompt: nil, http_id: nil,
+                   extra_references: nil, mixins_prompt: nil, boxes_prompt: nil, http_id: nil,
                    geometry_lock: true)
         steps = steps.to_i.clamp(STEPS_MIN, STEPS_MAX)
         guidance = KLEIN_GUIDANCE
@@ -470,6 +490,8 @@ module Dn1sup
         full_prompt = apply_geometry_lock(prompt.to_s, geometry_lock)
         mp = mixins_prompt.to_s.strip
         full_prompt = "#{full_prompt}\n#{mp}" unless mp.empty?
+        bp = boxes_prompt.to_s.strip
+        full_prompt = "#{full_prompt}\n#{bp}" unless bp.empty?
         w, h = width, height
         payload_seed = seed.nil? || seed.to_i < 0 ? nil : seed.to_i
 

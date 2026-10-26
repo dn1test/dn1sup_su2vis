@@ -28,6 +28,9 @@ module Dn1sup
         assert(Settings.respond_to?(:project_info), 'нет Settings.project_info')
         assert(Settings.respond_to?(:project_state), 'нет Settings.project_state')
         assert(Settings.respond_to?(:project_dir_for), 'нет Settings.project_dir_for')
+        assert(Settings.respond_to?(:project_dirname_for), 'нет Settings.project_dirname_for')
+        assert(Settings.respond_to?(:project_dirname?), 'нет Settings.project_dirname?')
+        assert(Settings.respond_to?(:legacy_project_fallback), 'нет Settings.legacy_project_fallback')
         assert(Settings.respond_to?(:init_project), 'нет Settings.init_project')
         assert(Client.respond_to?(:generate), 'нет Client.generate')
         assert(Client.respond_to?(:enhance_preview), 'нет Client.enhance_preview')
@@ -38,18 +41,29 @@ module Dn1sup
         assert(Scenes.respond_to?(:settle_view), 'нет Scenes.settle_view')
         assert(Scenes.respond_to?(:capture_all), 'нет Scenes.capture_all')
         assert(Scenes.respond_to?(:update_camera), 'нет Scenes.update_camera')
+        assert(Scenes.respond_to?(:norm_boxes), 'нет Scenes.norm_boxes')
+        assert(Scenes.respond_to?(:boxes), 'нет Scenes.boxes')
+        assert(Scenes.respond_to?(:save_boxes), 'нет Scenes.save_boxes')
+        assert(Scenes.respond_to?(:boxes_prompt), 'нет Scenes.boxes_prompt')
+        assert(Scenes.respond_to?(:annotated_sketch), 'нет Scenes.annotated_sketch')
+        assert(Scenes.respond_to?(:draw_boxes_png), 'нет Scenes.draw_boxes_png')
         assert(Jobs.respond_to?(:enqueue), 'нет Jobs.enqueue')
         assert(Jobs.respond_to?(:cancel), 'нет Jobs.cancel')
         assert(Jobs.respond_to?(:pump_start), 'нет Jobs.pump_start')
         assert(Gallery.respond_to?(:list), 'нет Gallery.list')
         assert(Gallery.respond_to?(:remove), 'нет Gallery.remove')
+        assert(Gallery.respond_to?(:clear), 'нет Gallery.clear')
+        assert(Gallery.respond_to?(:unique_path), 'нет Gallery.unique_path')
         assert(Gallery.respond_to?(:save_sidecar), 'нет Gallery.save_sidecar')
         assert(Mixins.respond_to?(:list), 'нет Mixins.list')
         assert(Mixins.respond_to?(:add_data), 'нет Mixins.add_data')
         assert(Mixins.respond_to?(:add_path), 'нет Mixins.add_path')
         assert(Mixins.respond_to?(:update), 'нет Mixins.update')
         assert(Mixins.respond_to?(:remove), 'нет Mixins.remove')
+        assert(Mixins.respond_to?(:clear), 'нет Mixins.clear')
         assert(Client.respond_to?(:mixins_prompt), 'нет Client.mixins_prompt')
+        assert(Client.respond_to?(:boxes_sentence), 'нет Client.boxes_sentence')
+        assert(Mixins.respond_to?(:annotated_job_path), 'нет Mixins.annotated_job_path')
         assert(Studio.respond_to?(:ensure_async), 'нет Studio.ensure_async')
         assert(Studio.respond_to?(:ensure_running!), 'нет Studio.ensure_running!')
         assert(Studio.respond_to?(:state), 'нет Studio.state')
@@ -66,12 +80,44 @@ module Dn1sup
         assert_equal((Settings::DEFAULTS.keys - %w[unsloth_key unsloth_autostart unsloth_cmd]).sort, Settings::PROJECT_KEYS.sort)
       end
 
-      test 'проект: папка su2vis/ рядом с моделью' do
+      test 'проект: папка su2vis_<имя модели> рядом с моделью' do
         assert(Settings.project_dir_for('').nil?, 'пустой путь — nil')
         assert(Settings.project_dir_for(nil).nil?, 'nil — nil')
         d = Settings.project_dir_for('D:/work/house.skp')
-        assert(d.to_s.end_with?('su2vis'), "папка проекта: #{d.inspect}")
+        assert(d.to_s.end_with?('su2vis_house'), "папка проекта: #{d.inspect}")
         assert_equal(File.dirname('D:/work/house.skp'), File.dirname(d.to_s))
+      end
+
+      test 'проект: имя папки чистится от запрещённых символов Windows' do
+        assert_equal('su2vis_house', Settings.project_dirname_for('D:/work/house.skp'), 'обычное имя')
+        assert_equal('su2vis_a_b_c_d', Settings.project_dirname_for('C:/x/a<b>c"d.skp'), 'запрещённые символы → _')
+        assert_equal('su2vis_my_house', Settings.project_dirname_for('C:/x/my*house.skp'), 'звёздочка → _')
+        assert_equal('su2vis_дом', Settings.project_dirname_for('C:/x/дом. ..skp'), 'хвостовые точки/пробелы')
+        assert_equal('su2vis', Settings.project_dirname_for(''), 'пустой путь — просто su2vis')
+        long = 'у' * 100
+        assert_equal(67, Settings.project_dirname_for("C:/x/#{long}.skp").length, 'кламп длины 60 + su2vis_')
+      end
+
+      test 'проект: project_dirname? признаёт старые и новые папки' do
+        assert(Settings.project_dirname?('su2vis'), 'старое имя su2vis')
+        assert(Settings.project_dirname?('su2vis_house'), 'новое имя su2vis_<модель>')
+        assert(!Settings.project_dirname?('su2visss'), 'похожее, но чужое')
+        assert(!Settings.project_dirname?('out'), 'чужая папка')
+        assert(!Settings.project_dirname?(nil), 'nil — не папка проекта')
+      end
+
+      test 'проект: фолбэк на старую su2vis/ пока новой нет' do
+        Dir.mktmpdir do |d|
+          newd = File.join(d, 'su2vis_house')
+          assert(Settings.legacy_project_fallback(nil).nil?, 'nil — nil')
+          assert(Settings.legacy_project_fallback(newd).nil?, 'без старой папки — nil')
+          old = File.join(d, 'su2vis')
+          Settings.init_project(old)
+          assert_equal(old, Settings.legacy_project_fallback(newd), 'старая su2vis/ с настройками должна вернуться')
+          assert(Settings.legacy_project_fallback(old).nil?, 'папка su2vis сама себе проект — фолбэк не нужен')
+          Settings.init_project(newd)
+          assert(Settings.legacy_project_fallback(newd).nil?, 'новая папка уже готова — фолбэк не нужен')
+        end
       end
 
       test 'проект: init/load roundtrip во временной папке (без записи defaults)' do
@@ -127,6 +173,11 @@ module Dn1sup
           rescue StandardError => e
             assert(e.message.include?('не сохранена'), "не тот отказ: #{e.message}")
           end
+          # новое имя su2vis_<модель> тоже удаляется
+          proj2 = File.join(d, 'su2vis_house')
+          Settings.init_project(proj2)
+          Settings.delete_project(proj2)
+          assert(!File.exist?(proj2), 'папка su2vis_house не удалилась')
         end
       end
 
@@ -281,12 +332,17 @@ module Dn1sup
         assert(!content.include?('В финал'), 'panel.html с легаси кнопкой в финал — устаревшая сборка')
         assert(content.include?('gallery_list'), 'panel.html без чтения галереи — устаревшая сборка')
         assert(content.include?('gallery_delete'), 'panel.html без удаления файлов — устаревшая сборка')
+        assert(content.include?('gallery_delete_all'), 'panel.html без «удалить все» в рендере — устаревшая сборка')
         assert(content.include?('mixins_list'), 'panel.html без списка примесей — устаревшая сборка')
         assert(content.include?('mixins_add_data'), 'panel.html без добавления примесей — устаревшая сборка')
         assert(content.include?('mixins_update'), 'panel.html без подписей примесей — устаревшая сборка')
         assert(content.include?('Примеси'), 'panel.html без примесей — устаревшая сборка')
+        assert(content.include?('mixins_delete_all'), 'panel.html без «удалить все» в примесях — устаревшая сборка')
+        assert(content.include?('Удалить все'), 'panel.html без кнопки Удалить все — устаревшая сборка')
         assert(content.include?('Удалить файл'), 'panel.html без иконки удаления — устаревшая сборка')
         assert(content.include?('Выделить / повернуть'), 'panel.html без редактора выделения — устаревшая сборка')
+        assert(content.include?('scenes_boxes_save'), 'panel.html без рамок сцены — устаревшая сборка')
+        assert(content.include?('Рамки'), 'panel.html без редактора рамок — устаревшая сборка')
         assert(content.include?('Квантование GGUF'), 'panel.html без выбора квантования klein — устаревшая сборка')
         assert(content.include?('Эскиз-референс'), 'panel.html без настроек эскиза-референса — устаревшая сборка')
         assert(content.include?('скрыть размеры'), 'panel.html без тумблера размеров — устаревшая сборка')
@@ -605,6 +661,23 @@ module Dn1sup
         end
       end
 
+      test 'mixins: clear удаляет все примеси' do
+        Dir.mktmpdir do |d|
+          out = File.join(d, 'out')
+          require 'base64'
+          url = "data:image/png;base64,#{Base64.strict_encode64("\x89PNG\r\n\x1A\n".b + 'x' * 16)}"
+          Mixins.add_data(url, 'а.png', out)
+          Mixins.add_data(url, 'б.png', out)
+          r = Mixins.clear(out)
+          assert(r[:ok], 'clear не ok')
+          assert_equal(2, r[:deleted], "счётчик: #{r.inspect}")
+          assert_equal([], Mixins.list(out), 'список после clear не пуст')
+          leftovers = Dir.children(File.join(out, 'mixins')).reject { |n| n.end_with?('.json') }
+          assert_equal([], leftovers, 'картинки примесей остались')
+          assert_equal(0, Mixins.clear(out)[:deleted], 'повторный clear — 0')
+        end
+      end
+
       test 'mixins: dims_from_bytes различает PNG/JPEG/WebP' do
         png = "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
               [64].pack('N') + [48].pack('N') + ("\x00".b * 8)
@@ -834,15 +907,15 @@ module Dn1sup
         end
       end
 
-      test 'scenes: превью 400/800/1200 (4:3) с тонкими линиями' do
-        assert_equal([400, 300], Scenes::PREVIEW_SIZES['min'])
-        assert_equal([800, 600], Scenes::PREVIEW_SIZES['mid'])
-        assert_equal([1_200, 900], Scenes::PREVIEW_SIZES['max'])
-        assert_equal([800, 600], Scenes.preview_dims('mid'))
-        assert_equal([800, 600], Scenes.preview_dims('мусор'))
-        assert_equal('mid', Settings::DEFAULTS['preview_size'])
-        assert_equal('mid', Settings.coerce('preview_size', 'мусор'))
-        assert_equal('max', Settings.coerce('preview_size', 'max'))
+      test 'scenes: превью — размер задаёт фронт, thumbnail санитизирует' do
+        assert_equal(800, Scenes::THUMB_W)
+        assert_equal(600, Scenes::THUMB_H)
+        assert_equal(1_600, Scenes::THUMB_MAX)
+        assert_equal(800, Scenes.thumb_dim(nil, Scenes::THUMB_W))
+        assert_equal(600, Scenes.thumb_dim('мусор', Scenes::THUMB_H))
+        assert_equal(650, Scenes.thumb_dim('650', Scenes::THUMB_W))
+        assert_equal(1_600, Scenes.thumb_dim(9_999, Scenes::THUMB_W))
+        assert_equal(nil, Settings::DEFAULTS['preview_size'], 'preview_size должен быть удалён из настроек')
         assert(Scenes.method(:capture).parameters.include?([:key, :thin_lines]), 'у capture нет thin_lines:')
       end
 
@@ -874,6 +947,39 @@ module Dn1sup
           list = Gallery.list(d)
           assert_equal(1, list.size, "список: #{list.inspect}")
           assert_equal('final', list.first['kind'], 'вид в списке')
+        end
+      end
+
+      test 'gallery: clear удаляет финалы и сироты, preview_ и лог не трогает' do
+        Dir.mktmpdir do |d|
+          f1 = File.join(d, 'render_a.jpg')
+          File.binwrite(f1, "\xFF\xD8\xFF".b + 'x' * 16)
+          Gallery.save_sidecar(f1, 'final', { 'scene' => 0, 'seed' => 1 })
+          f2 = File.join(d, 'old_final.png')
+          File.binwrite(f2, "\x89PNG\r\n\x1A\n".b + 'x' * 16)
+          prev = File.join(d, 'preview_old.png')
+          File.binwrite(prev, "\x89PNG\r\n\x1A\n".b + 'x' * 16)
+          log = File.join(d, 'su2vis.log')
+          File.write(log, '{}')
+          r = Gallery.clear(d)
+          assert(r[:ok], 'clear не ok')
+          assert_equal(2, r[:deleted], "счётчик: #{r.inspect}")
+          assert(!File.exist?(f1) && !File.exist?("#{f1}.json"), 'финал с сайдкаром остался')
+          assert(!File.exist?(f2), 'сирота осталась')
+          assert(File.exist?(prev), 'preview_ не должен удаляться')
+          assert(File.exist?(log), 'лог не должен удаляться')
+          assert_equal([], Gallery.list(d), 'список после clear не пуст')
+          assert_equal(0, Gallery.clear(d)[:deleted], 'повторный clear — 0')
+        end
+      end
+
+      test 'gallery: unique_path не даёт перезаписать файл или сайдкар' do
+        Dir.mktmpdir do |d|
+          assert_equal(File.join(d, 'a.jpg'), Gallery.unique_path(d, 'a', '.jpg'), 'свободное имя')
+          File.binwrite(File.join(d, 'a.jpg'), 'x')
+          assert_equal(File.join(d, 'a_2.jpg'), Gallery.unique_path(d, 'a', '.jpg'), 'файл занят → _2')
+          File.write(File.join(d, 'a_2.jpg.json'), '{}')
+          assert_equal(File.join(d, 'a_3.jpg'), Gallery.unique_path(d, 'a', '.jpg'), 'сайдкар занял _2 → _3')
         end
       end
 
@@ -1190,6 +1296,176 @@ module Dn1sup
         assert_equal(false, b2[:cpu_offload])
         assert(!b2.key?(:step_cache), "auto step_cache не шлём: #{b2.inspect}")
       end
+
+      test 'boxes: norm_boxes чистит мусор и режет до 12' do
+        assert_equal([], Scenes.norm_boxes(nil), 'nil — пусто')
+        assert_equal([], Scenes.norm_boxes('мусор'), 'строка — пусто')
+        assert_equal([], Scenes.norm_boxes([{ 'x' => 0.1, 'y' => 0.1, 'w' => 0, 'h' => 0.5 }]), 'нулевой ширины — долой')
+        b = Scenes.norm_boxes([{ 'x' => -0.5, 'y' => 0.2, 'w' => 2, 'h' => 0.1, 'label' => '  остров  ' }])
+        assert_equal([{ 'x' => 0.0, 'y' => 0.2, 'w' => 1.0, 'h' => 0.1, 'label' => 'остров' }], b, 'кламп и trim')
+        sym = Scenes.norm_boxes([{ x: 0.1, y: 0.2, w: 0.3, h: 0.1, label: 's' }])
+        assert_equal(0.1, sym.first['x'], 'символьные ключи')
+        many = Array.new(20) { |i| { 'x' => 0.0, 'y' => 0.0, 'w' => 0.1, 'h' => 0.1, 'label' => i.to_s } }
+        assert_equal(Scenes::BOXES_MAX, Scenes.norm_boxes(many).size, 'лимит боксов')
+      end
+
+      test 'boxes: boxes_prompt нумерует по позиции, пустые подписи пропускает' do
+        assert_equal('', Scenes.boxes_prompt([]), 'пусто — пусто')
+        assert_equal('', Scenes.boxes_prompt([{ 'x' => 0, 'y' => 0, 'w' => 0.5, 'h' => 0.5, 'label' => '  ' }]), 'без подписи — пусто')
+        got = Scenes.boxes_prompt([
+                                   { 'x' => 0, 'y' => 0, 'w' => 0.5, 'h' => 0.5, 'label' => 'остров' },
+                                   { 'x' => 0, 'y' => 0, 'w' => 0.5, 'h' => 0.5, 'label' => '' },
+                                   { 'x' => 0, 'y' => 0, 'w' => 0.5, 'h' => 0.5, 'label' => 'шкаф' }
+                                 ])
+        assert(got.include?('Red box 1: остров.'), "бокс 1: #{got.inspect}")
+        assert(!got.include?('Red box 2'), 'бокс без подписи попал в текст')
+        assert(got.include?('Red box 3: шкаф.'), 'нумерация по позиции массива')
+      end
+
+      test 'boxes: draw_boxes_png рисует рамки и бейдж, annotated_sketch кэширует' do
+        require 'zlib'
+        w, h = 200, 100
+        raw = +''.b
+        h.times do
+          raw << 0.chr
+          w.times { raw << [235, 235, 235].pack('C3') }
+        end
+        chunk = lambda do |type, data|
+          d = data.b
+          [d.bytesize].pack('N') + type + d + [Zlib.crc32(type + d)].pack('N')
+        end
+        png = "\x89PNG\r\n\x1A\n".b + chunk.call('IHDR', [w, h, 8, 2, 0, 0, 0].pack('NNC5')) +
+              chunk.call('IDAT', Zlib.deflate(raw)) + chunk.call('IEND', '')
+        assert(Scenes.draw_boxes_png(png, []).nil?, 'нет боксов — nil')
+        assert(Scenes.draw_boxes_png('мусор'.b, [{ 'x' => 0, 'y' => 0, 'w' => 0.5, 'h' => 0.5 }]).nil?, 'не PNG — nil')
+        bs = [{ 'x' => 0.1, 'y' => 0.1, 'w' => 0.5, 'h' => 0.5, 'label' => 'остров' }]
+        out = Scenes.draw_boxes_png(png, bs)
+        dec = Scenes.png_pixels(out)
+        assert_equal([200, 100], [dec[:w], dec[:h]], 'размер сохранился')
+        px = ->(x, y) { dec[:rows][y][x * 3, 3] }
+        assert_equal(Scenes::BOX_COLOR, px.call(30, 10), 'верхняя граница рамки (y=10)')
+        assert_equal(Scenes::BOX_COLOR, px.call(20, 30), 'левая граница рамки (x=20)')
+        assert_equal(Scenes::BOX_COLOR, px.call(100, 59), 'нижняя граница рамки (y1=60)')
+        assert_equal([235, 235, 235], px.call(40, 40), 'внутри контура — фон не закрашен')
+        # бейдж: левый верхний угол рамки — белый фон, чёрная цифра «1»
+        assert_equal([255, 255, 255], px.call(28, 20), 'бейдж белый (правее цифры)')
+        assert_equal(Scenes::BADGE_FG, px.call(24, 13), 'цифра номера чёрная')
+        # annotated_sketch: пишет файл, кэш на второй вызов
+        Dir.mktmpdir do |d|
+          src = File.join(d, 'scene_0.png')
+          File.binwrite(src, png)
+          got = Scenes.annotated_sketch(src, bs)
+          assert(!got.nil? && got != src, 'аннотированная копия не создана')
+          assert(File.file?(got), 'файл копии не записан')
+          assert_equal(got, Scenes.annotated_sketch(src, bs), 'кэш не сработал')
+          assert_equal(src, Scenes.annotated_sketch(src, []), 'пустые боксы — исходный путь')
+          assert_equal('', Scenes.annotated_sketch('', bs), 'пустой путь — пусто без падения')
+        end
+      end
+
+      test 'boxes: mixins хранят боксы в сайдкаре и прокидывают в задачу' do
+        Dir.mktmpdir do |d|
+          out = File.join(d, 'out')
+          raw = "\x89PNG\r\n\x1A\n".b + 'x' * 16
+          require 'base64'
+          url = "data:image/png;base64,#{Base64.strict_encode64(raw)}"
+          e = Mixins.add_data(url, 'с_боксами.png', out)
+          bs = [{ 'x' => 0.1, 'y' => 0.1, 'w' => 0.4, 'h' => 0.4, 'label' => 'фактура' }]
+          u = Mixins.update(e['id'], boxes: bs, dir: out)
+          assert_equal(bs, u['boxes'], 'боксы не сохранились')
+          list = Mixins.list(out)
+          assert_equal(bs, list.first['boxes'], 'боксы в списке')
+          got = Mixins.active_for_job([{ 'path' => e['file'], 'caption' => 'x', 'active' => true, 'boxes' => bs }])
+          assert_equal(bs, got.first['boxes'], 'боксы в задаче')
+          got2 = Mixins.active_for_job([{ 'path' => e['file'], 'caption' => 'x', 'active' => true, 'boxes' => [{ 'x' => 5, 'y' => 5, 'w' => 0, 'h' => 0 }] }])
+          assert_equal([], got2.first['boxes'], 'мусорные боксы не выжили')
+          u2 = Mixins.update(e['id'], dir: out)
+          assert_equal(bs, u2['boxes'], 'update без boxes: не должен затирать')
+          u3 = Mixins.update(e['id'], boxes: [], dir: out)
+          assert_equal([], u3['boxes'], 'сброс боксов пустым массивом')
+          doc = JSON.parse(File.read("#{e['file']}.json", encoding: 'UTF-8'))
+          assert_equal([], doc['boxes'], 'пустой массив в сайдкаре')
+        end
+      end
+
+      test 'boxes: mixins annotated_job_path — сбой рисовалки даёт исходный путь, успех — кэш' do
+        Dir.mktmpdir do |d|
+          small = File.join(d, 'm.png')
+          File.binwrite(small, "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\x0D".b + 'IHDR'.b +
+                        [100].pack('N') + [100].pack('N') + ("\x00".b * 64))
+          bs = [{ 'x' => 0.1, 'y' => 0.1, 'w' => 0.5, 'h' => 0.5, 'label' => 'x' }]
+          # фолбэк без боксов: путь как есть
+          assert_equal([small, false], Mixins.annotated_job_path(small, nil, nil, []), 'без боксов — false')
+          # стаб сбоя PowerShell: [путь, false]
+          orig = Mixins.method(:try_powershell_boxes)
+          Mixins.define_singleton_method(:try_powershell_boxes) { |_p, _e, _d, _b| nil }
+          begin
+            got = Mixins.annotated_job_path(small, nil, nil, bs)
+            assert_equal([small, false], got, 'сбой рисовалки — исходный путь и false')
+          ensure
+            Mixins.define_singleton_method(:try_powershell_boxes, orig)
+          end
+          # стаб успеха: рисованый PNG попадает в кэш
+          fake_png = "\x89PNG\r\n\x1A\n".b + 'ok'
+          Mixins.define_singleton_method(:try_powershell_boxes) { |_p, _e, _d, _b| fake_png }
+          begin
+            got2 = Mixins.annotated_job_path(small, nil, nil, bs)
+            assert(got2[1], 'успех должен дать true')
+            assert(got2[0] != small, 'успех должен дать другой путь')
+            assert_equal(fake_png, File.binread(got2[0]), 'в кэше не то, что вернул рисователь')
+            assert_equal(got2, Mixins.annotated_job_path(small, nil, nil, bs), 'кэш аннотации не сработал')
+          ensure
+            Mixins.define_singleton_method(:try_powershell_boxes, orig)
+          end
+          # webp: рисовалка не умеет — заранее false
+          webp = File.join(d, 'm.webp')
+          File.binwrite(webp, 'RIFF'.b + [18].pack('V') + 'WEBP'.b + 'VP8 '.b + [10].pack('V') + "\x00".b * 10)
+          assert_equal([webp, false], Mixins.annotated_job_path(webp, nil, nil, bs), 'webp без рамок')
+        end
+      end
+
+      test 'boxes: mixins_prompt описывает рамки, boxes_ok=false глушит' do
+        bs = [{ 'x' => 0.1, 'y' => 0.1, 'w' => 0.4, 'h' => 0.4, 'label' => 'фактура кирпича' },
+              { 'x' => 0.5, 'y' => 0.5, 'w' => 0.2, 'h' => 0.2, 'label' => ' ' }]
+        got = Client.mixins_prompt([{ 'caption' => 'стена', 'boxes' => bs }])
+        assert(got.include?('Reference image 2: red box 1 — фактура кирпича.'), "боксы потеряны: #{got.inspect}")
+        assert(!got.include?('red box 2'), 'пустая подпись попала')
+        got2 = Client.mixins_prompt([{ 'caption' => 'стена', 'boxes' => bs, 'boxes_ok' => false }])
+        assert(!got2.include?('red box'), 'boxes_ok=false должен глушить текст')
+        assert(got2.include?('стена'), 'подпись без боксов должна остаться')
+      end
+
+      test 'boxes: generate добавляет boxes_prompt в тело запроса' do
+        bodies = []
+        fake = Object.new
+        fake.define_singleton_method(:request) do |req|
+          bodies << JSON.parse(req.body)
+          raise 'стоп-тест'
+        end
+        orig_api = Client.method(:api)
+        Client.define_singleton_method(:api) { |_url| fake }
+        begin
+          begin
+            Client.generate('http://127.0.0.1:9', 'k', nil, prompt: 'p', width: 256, height: 256,
+                            boxes_prompt: "Red box 1: остров.")
+            raise 'не дошло'
+          rescue RuntimeError => e
+            raise unless e.message == 'стоп-тест'
+          end
+        ensure
+          Client.define_singleton_method(:api, orig_api)
+        end
+        assert(bodies.first['prompt'].include?("Red box 1: остров."), 'boxes_prompt потерян')
+      end
+
+      test 'boxes: диалоговые колбэки зарегистрированы' do
+        src = File.read(File.join(__dir__, '..', 'dialog.rb'), encoding: 'UTF-8')
+        assert(src.include?("add_action_callback('scenes_boxes_save')"), 'нет колбэка scenes_boxes_save')
+        assert(src.include?("data.fetch('boxes'"), 'mixins_update не прокидывает boxes')
+        assert(src.include?("add_action_callback('mixins_delete_all')"), 'нет колбэка mixins_delete_all')
+        assert(src.include?("add_action_callback('gallery_delete_all')"), 'нет колбэка gallery_delete_all')
+      end
+
     end
   end
 end

@@ -153,24 +153,17 @@ module Dn1sup
           dlg.add_action_callback('scenes_thumb') do |_ctx, req_id, params|
             data = parse_payload(params)
             white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
-            key = data['preview'] || data['preview_size'] || Settings.get('preview_size')
-            w, h = Scenes.preview_dims(key)
-            w = data['w'].to_i > 0 ? data['w'].to_i : w
-            h = data['h'].to_i > 0 ? data['h'].to_i : h
             push_event('result', id: req_id,
-                       payload: { index: data['index'].to_i, thumb: Scenes.thumbnail(data['index'].to_i, w, h, white_bg: white) })
+                       payload: { index: data['index'].to_i,
+                                  thumb: Scenes.thumbnail(data['index'].to_i, data['w'], data['h'], white_bg: white) })
           end
           dlg.add_action_callback('scenes_sync_view') do |_ctx, req_id, params|
             data = parse_payload(params)
             idx = data['index'].to_i
             ok = Scenes.update_camera(idx)
             white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
-            key = data['preview'] || data['preview_size'] || Settings.get('preview_size')
-            w, h = Scenes.preview_dims(key)
-            w = data['w'].to_i > 0 ? data['w'].to_i : w
-            h = data['h'].to_i > 0 ? data['h'].to_i : h
             push_event('result', id: req_id,
-                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx, w, h, white_bg: white) })
+                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx, data['w'], data['h'], white_bg: white) })
           end
           dlg.add_action_callback('scenes_capture') do |_ctx, req_id, params|
             data = parse_payload(params)
@@ -180,6 +173,18 @@ module Dn1sup
               shots = Scenes.capture_all(list, hd: data['hd'] == true, sketch: sk)
               Log.append('shots_captured', 'scenes' => list, 'hd' => data['hd'] == true, 'sketch' => sk)
               push_event('result', id: req_id, payload: { ok: true, sketches: shots })
+            rescue StandardError => e
+              push_event('result', id: req_id, payload: { ok: false, error: e.message })
+            end
+          end
+          # Рамки с описанием на сцене: хранятся в атрибутах страницы.
+          dlg.add_action_callback('scenes_boxes_save') do |_ctx, req_id, params|
+            data = parse_payload(params)
+            begin
+              idx = data['index'].to_i
+              boxes = Scenes.save_boxes(idx, data['boxes'])
+              Log.append('scene_boxes', 'scene' => idx, 'count' => boxes.size)
+              push_event('result', id: req_id, payload: { ok: true, index: idx, boxes: boxes })
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end
@@ -221,7 +226,8 @@ module Dn1sup
             begin
               entry = Mixins.update(data['id'].to_s, caption: data['caption'], active: data['active'], crop: data['crop'], rotation: data['rotation'],
                                     role: data['role'], caption_neg: data['caption_neg'],
-                                    weight: data['weight'], apply_to: data['apply_to'], pos: data['pos'])
+                                    weight: data['weight'], apply_to: data['apply_to'], pos: data['pos'],
+                                    boxes: data.fetch('boxes', :__unset__))
               push_event('result', id: req_id, payload: { ok: true, entry: entry })
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
@@ -240,6 +246,13 @@ module Dn1sup
             data = parse_payload(params)
             begin
               push_event('result', id: req_id, payload: Mixins.remove(data['id'].to_s))
+            rescue StandardError => e
+              push_event('result', id: req_id, payload: { ok: false, error: e.message })
+            end
+          end
+          dlg.add_action_callback('mixins_delete_all') do |_ctx, req_id|
+            begin
+              push_event('result', id: req_id, payload: Mixins.clear)
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end
@@ -302,6 +315,13 @@ module Dn1sup
             data = parse_payload(params)
             begin
               push_event('result', id: req_id, payload: Gallery.remove(Settings.out_dir, data['file']))
+            rescue StandardError => e
+              push_event('result', id: req_id, payload: { ok: false, error: e.message })
+            end
+          end
+          dlg.add_action_callback('gallery_delete_all') do |_ctx, req_id|
+            begin
+              push_event('result', id: req_id, payload: Gallery.clear(Settings.out_dir))
             rescue StandardError => e
               push_event('result', id: req_id, payload: { ok: false, error: e.message })
             end

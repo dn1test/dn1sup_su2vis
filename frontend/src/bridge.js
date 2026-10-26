@@ -53,8 +53,8 @@ export function callRuby(action, payload) {
 }
 
 const mockScenes = [
-  { name: 'Сцена 1 — санузел', index: 0, current: true },
-  { name: 'Сцена 2 — шкаф', index: 1, current: false }
+  { name: 'Сцена 1 — санузел', index: 0, current: true, boxes: [] },
+  { name: 'Сцена 2 — шкаф', index: 1, current: false, boxes: [] }
 ]
 
 const mockSettings = {
@@ -67,7 +67,6 @@ const mockSettings = {
   unsloth_model: 'unsloth/flux-3-image-klein-GGUF',
   unsloth_gguf: 'flux-3-image-klein-UD-Q4_K_XL.gguf',
   sketch_preset: '1024x768', sketch_source: 'hd', sketch_thin_lines: true, sketch_hide_dims: true, sketch_autocrop: false,
-  preview_size: 'mid',
   preview_variants: 1, preview_random_seeds: true,
   out_dir: '',
   project_state: 'global', project_dir: '', model_name: '',
@@ -87,6 +86,7 @@ function mockCall(action, payload) {
     case 'scenes_thumb': return { index: payload?.index ?? 0, thumb: null }
     case 'scenes_sync_view': return { index: payload?.index ?? 0, ok: true, thumb: null }
     case 'scenes_capture': return { ok: true, sketches: {} }
+    case 'scenes_boxes_save': return { ok: true, index: payload?.index ?? 0, boxes: payload?.boxes || [] }
     case 'scenes_shot': return { index: payload?.index ?? 0, img: null }
     case 'jobs_start': return { id: 'mock', kind: payload?.kind || 'final', status: 'done', progress: { done: 1, total: 1 }, results: [], error: null, params: payload }
     case 'jobs_poll': return { id: payload?.id, status: 'done', progress: {}, results: [], error: null }
@@ -94,12 +94,14 @@ function mockCall(action, payload) {
     case 'jobs_log': return []
     case 'gallery_list': return []
     case 'gallery_delete': return { ok: true }
+    case 'gallery_delete_all': return { ok: true, deleted: 0 }
     case 'mixins_list': return []
     case 'mixins_add_data': return { ok: true, entry: { id: 'mock-mix.png', file: 'mock-mix.png', name: payload?.name || 'mock', caption: '', caption_neg: '', role: 'auto', weight: 1, apply_to: 'final', active: true, data_url: payload?.data_url } }
     case 'mixins_add_path': return { ok: true, entry: { id: 'mock-mix.png', file: 'mock-mix.png', name: 'mock', caption: '', caption_neg: '', role: 'auto', weight: 1, apply_to: 'final', active: true } }
     case 'mixins_update': return { ok: true, entry: { id: payload?.id, caption: payload?.caption || '', caption_neg: payload?.caption_neg || '', role: payload?.role || 'auto', weight: payload?.weight || 1, apply_to: 'final', active: payload?.active, crop: payload?.crop || null, rotation: payload?.rotation || 0 } }
     case 'mixins_reorder': return { ok: true }
     case 'mixins_delete': return { ok: true }
+    case 'mixins_delete_all': return { ok: true, deleted: 0 }
     case 'mixins_view': return { ok: true, data_url: null }
     case 'enhance_preview': return { ok: true, task: { id: 'mock-enh', status: 'done', text: 'mock: вне SketchUp — здесь будет текст апсемплера', error: null } }
     case 'enhance_poll': return { ok: true, task: { id: payload?.id || 'mock-enh', status: 'done', text: 'mock: вне SketchUp — здесь будет текст апсемплера', error: null } }
