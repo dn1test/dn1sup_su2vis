@@ -7,10 +7,12 @@ require 'fileutils'
 module Dn1sup
   module Su2vis
     # Настройки: подключение (ключ студии) — глобально в SketchUp defaults,
-    # всё остальное — per-file: su2vis_<имя модели>/su2vis.json рядом с .skp
-    # (проекты в старой папке su2vis/ продолжают работать — см. project_dir).
-    # Без модели (пустой path) или без папки проекта — legacy-режим:
-    # чтение/запись через SketchUp defaults, как раньше.
+    # всё остальное — per-file: <имя модели>_su2vis/su2vis.yaml рядом с .skp.
+    # Старые su2vis/ и su2vis_<имя>/ при создании проекта переезжают под
+    # новое имя целиком (см. migrate_legacy_project) — молча в них больше
+    # не работаем, иначе папка с именем файла не появляется никогда.
+    # Без модели (пустой path) — legacy-режим: чтение/запись через
+    # SketchUp defaults, как раньше.
     module Settings
       SECTION = 'dn1sup_su2vis'
 
@@ -121,31 +123,39 @@ module Dn1sup
           b.end_with?("_#{PROJECT_DIRNAME}")
       end
 
-      # Фолбэк для проектов, созданных до суффикса с именем модели: новая
-      # папка <имя>_su2vis ещё не создана, а старая su2vis/ (или su2vis_<имя>/)
-      # с настройками лежит рядом — работаем в ней, ничего не теряется.
-      # Готовая новая папка всегда перекрывает старую.
-      def legacy_project_fallback(new_dir)
-        return nil if new_dir.nil?
+      # Переезд со старых папок (su2vis/, su2vis_<имя>/): если новой
+      # <имя>_su2vis/ ещё нет (ни папки, ни настроек), а старая с настройками
+      # есть рядом — переносим её целиком под новое имя (настройки, out/,
+      # mixins/). Новая с настройками всегда побеждает; чужое не трогаем.
+      # Возвращает путь старой папки или nil. Данные не теряются: перенос
+      # через mv в пределах одной папки; при сбое — предупреждение, старая
+      # остаётся на месте.
+      def migrate_legacy_project(new_dir)
+        return nil if new_dir.nil? || new_dir.to_s.empty?
         return nil if File.basename(new_dir.to_s) == PROJECT_DIRNAME
-        return nil if project_settings_exist?(new_dir)
+        return nil if File.exist?(new_dir.to_s) || project_settings_exist?(new_dir)
 
         dir = File.dirname(new_dir.to_s)
         base = File.basename(new_dir.to_s)
         # 0.20.x: su2vis_<имя> — ищем пару к новой <имя>_su2vis.
         old_prefixed = File.join(dir, "#{PROJECT_DIRNAME}_#{base.sub(/_#{PROJECT_DIRNAME}\z/, '')}")
-        return old_prefixed if project_settings_exist?(old_prefixed)
-
         old_plain = File.join(dir, PROJECT_DIRNAME)
-        project_settings_exist?(old_plain) ? old_plain : nil
+        old = [old_prefixed, old_plain].find { |c| project_settings_exist?(c) }
+        return nil if old.nil?
+
+        FileUtils.mv(old, new_dir)
+        Log.append('project_migrated', 'from' => old.to_s, 'to' => new_dir.to_s)
+        old
+      rescue StandardError => e
+        warn "[Su2vis] migrate legacy project: #{e.message}"
+        nil
       end
 
-      # Папка проекта активной модели (nil — модель не сохранена).
+      # Папка проекта активной модели: всегда <имя>_su2vis рядом с .skp
+      # (nil — модель не сохранена). Старые папки молча не подхватываются —
+      # переезд только через migrate_legacy_project при создании.
       def project_dir
-        d = project_dir_for(model_path)
-        return d if d.nil?
-
-        legacy_project_fallback(d) || d
+        project_dir_for(model_path)
       end
 
       def project_settings_path(dir)
@@ -367,11 +377,14 @@ module Dn1sup
 
       # Создать папку проекта: <имя>_su2vis/ + out/, затравка su2vis.yaml из
       # текущих эффективных настроек (включая несохранённые правки legacy).
-      # Несохранённая модель — исключение: сначала сохранить .skp.
+      # Старая su2vis/ или su2vis_<имя>/ рядом сначала переезжает под новое
+      # имя целиком (настройки и рендеры сохраняются). Несохранённая модель —
+      # исключение: сначала сохранить .skp.
       def init_project(dir = :auto)
         d = dir == :auto ? project_dir : dir
         raise 'модель не сохранена: сохраните .skp (Файл → Сохранить), затем создайте <имя>_su2vis/' if d.nil? || d.to_s.empty?
 
+        migrate_legacy_project(d)
         FileUtils.mkdir_p(d.to_s)
         FileUtils.mkdir_p(project_out_dir(d))
         seed = {}

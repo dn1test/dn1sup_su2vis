@@ -30,7 +30,7 @@ module Dn1sup
         assert(Settings.respond_to?(:project_dir_for), 'нет Settings.project_dir_for')
         assert(Settings.respond_to?(:project_dirname_for), 'нет Settings.project_dirname_for')
         assert(Settings.respond_to?(:project_dirname?), 'нет Settings.project_dirname?')
-        assert(Settings.respond_to?(:legacy_project_fallback), 'нет Settings.legacy_project_fallback')
+        assert(Settings.respond_to?(:migrate_legacy_project), 'нет Settings.migrate_legacy_project')
         assert(Settings.respond_to?(:init_project), 'нет Settings.init_project')
         assert(Client.respond_to?(:generate), 'нет Client.generate')
         assert(Client.respond_to?(:enhance_preview), 'нет Client.enhance_preview')
@@ -108,21 +108,26 @@ module Dn1sup
         assert(!Settings.project_dirname?(nil), 'nil — не папка проекта')
       end
 
-      test 'проект: фолбэк на старые su2vis/ и su2vis_<имя>/ пока новой нет' do
+      test 'проект: старые su2vis/ и su2vis_<имя>/ переезжают в <имя>_su2vis при init' do
         Dir.mktmpdir do |d|
           newd = File.join(d, 'house_su2vis')
-          assert(Settings.legacy_project_fallback(nil).nil?, 'nil — nil')
-          assert(Settings.legacy_project_fallback(newd).nil?, 'без старых папок — nil')
+          assert(Settings.migrate_legacy_project(nil).nil?, 'nil — nil')
+          assert(Settings.migrate_legacy_project(newd).nil?, 'без старых папок — nil')
           old = File.join(d, 'su2vis')
           Settings.init_project(old)
-          assert_equal(old, Settings.legacy_project_fallback(newd), 'старая su2vis/ с настройками должна вернуться')
-          assert(Settings.legacy_project_fallback(old).nil?, 'папка su2vis сама себе проект — фолбэк не нужен')
-          # Формат 0.20.x перекрывает древний, но уступает готовому новому.
-          old20 = File.join(d, 'su2vis_house')
+          File.write(File.join(old, 'out', 'keep.txt'), 'x')
+          assert_equal(old, Settings.migrate_legacy_project(newd), 'старая su2vis/ должна переехать')
+          assert(!File.exist?(old), 'старая папка осталась')
+          assert(File.file?(File.join(newd, 'su2vis.yaml')), 'настройки не переехали')
+          assert(File.file?(File.join(newd, 'out', 'keep.txt')), 'рендеры не переехали')
+          assert_equal('ready', Settings.project_state(newd), 'после переезда — ready')
+          assert(Settings.migrate_legacy_project(newd).nil?, 'повторный переезд — nil')
+          # Формат 0.20.x тоже переезжает.
+          newd2 = File.join(d, 'cabin_su2vis')
+          old20 = File.join(d, 'su2vis_cabin')
           Settings.init_project(old20)
-          assert_equal(old20, Settings.legacy_project_fallback(newd), 'su2vis_house/ должна вернуться')
-          Settings.init_project(newd)
-          assert(Settings.legacy_project_fallback(newd).nil?, 'новая папка уже готова — фолбэк не нужен')
+          assert_equal(old20, Settings.migrate_legacy_project(newd2), 'su2vis_cabin/ должна переехать')
+          assert(!File.exist?(old20), 'старая папка 0.20.x осталась')
         end
       end
 

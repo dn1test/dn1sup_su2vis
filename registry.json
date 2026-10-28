@@ -5,6 +5,6 @@
     "author": "DN1Sup",
     "description": "Генерация фотореалистичных картинок из эскизов сцен через локальный Unsloth Studio (flux-3-klein).",
     "repo": "dn1test/dn1sup_su2vis",
-    "version": "0.22.0"
+    "version": "0.22.1"
   }
 ]

@@ -19,12 +19,14 @@ module Dn1sup
 
       # Журнал — в папке настроек проекта (<имя>_su2vis/su2vis.log, рядом
       # с su2vis.yaml), а не в out/ (иначе «удалить все» в галерее и
-      # ручная чистка out/ уносят историю). Модель не сохранена —
-      # фолбэк в legacy_out_dir.
+      # ручная чистка out/ уносят историю). Папка проекта без настроек
+      # (ещё не создана) — фолбэк в legacy_out_dir, чтобы лог не создавал
+      # пустые папки раньше времени; как и модель не сохранена.
       def path
         return @path_override if @path_override
 
         d = Settings.project_dir
+        d = nil unless d && Settings.project_settings_exist?(d)
         d = Settings.legacy_out_dir if d.nil? || d.to_s.empty?
         File.join(d.to_s, 'su2vis.log')
       end

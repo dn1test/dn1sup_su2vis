@@ -133,7 +133,7 @@ const projectState = computed(() => settings.value.project_state || 'global')
 const projectDirLabel = computed(() => {
   const d = String(settings.value.project_dir || '')
   const base = d.split(/[\\/]/).pop()
-  return base && base !== '.' ? base : (settings.value.model_name ? `su2vis_${settings.model_name}` : 'su2vis')
+  return base && base !== '.' ? base : (settings.value.model_name ? `${settings.value.model_name}_su2vis` : 'su2vis')
 })
 const useScenes = computed(() => settings.value.use_scenes !== false)
 const useMixins = computed(() => settings.value.use_mixins !== false)
