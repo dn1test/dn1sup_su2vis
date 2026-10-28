@@ -334,6 +334,7 @@ module Dn1sup
         assert(content.include?('Повторить'), 'panel.html без повтора загрузки картинки — устаревшая сборка')
         assert(content.include?('load_error'), 'panel.html без видимой ошибки загрузки — устаревшая сборка')
         assert(content.include?('Папка для рендеров'), 'panel.html без поля папки — устаревшая сборка')
+        assert(content.include?('Имя файла и папка'), 'panel.html без меню имён в статус-баре — устаревшая сборка')
         assert(content.include?('загружаю…'), 'panel.html без тумб финала — устаревшая сборка')
         assert(content.include?('overflow-y-auto'), 'panel.html без прокрутки контента — устаревшая сборка')
         assert(content.include?('flex-col'), 'panel.html без колоночной раскладки — устаревшая сборка')
@@ -629,6 +630,33 @@ module Dn1sup
             assert_equal([], Log.tail(50), 'после clear пусто')
           ensure
             Log.path_override = nil
+          end
+        end
+      end
+
+      test 'log: путь — в папке настроек, а не в out/' do
+        Log.path_override = nil
+        p = Log.path
+        assert(p.to_s.end_with?('su2vis.log'), "имя журнала: #{p.inspect}")
+        # Без модели (стаб) — фолбэк в legacy_out_dir.
+        assert_equal(File.join(Settings.legacy_out_dir, 'su2vis.log'), p, 'лог без модели')
+        # В готовом проекте — корень проекта, а не out/.
+        Dir.mktmpdir do |d|
+          proj = File.join(d, 'house_su2vis')
+          Settings.init_project(proj)
+          out = Settings.project_out_dir(proj)
+          assert(out.end_with?('out'), "out: #{out.inspect}")
+          class << Settings
+            alias_method :__orig_project_dir_for_log_test, :project_dir
+          end
+          begin
+            Settings.define_singleton_method(:project_dir) { proj }
+            assert_equal(File.join(proj, 'su2vis.log'), Log.path, 'лог в корне проекта')
+            assert(!Log.path.include?('out'), "лог не в out/: #{Log.path.inspect}")
+          ensure
+            class << Settings
+              alias_method :project_dir, :__orig_project_dir_for_log_test
+            end
           end
         end
       end

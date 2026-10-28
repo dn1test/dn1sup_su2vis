@@ -38,14 +38,14 @@
         @move="moveMixin" @delete="deleteMixin" @transform="transformMixin"
         @save-scene-boxes="saveSceneBoxes" @save-mixin-boxes="saveMixinBoxes" @delete-all="deleteAllMixins" />
       <PromptCol v-model="settings" :enhance-preview="enhancePreview"
-        @save="saveSettings" @enhance-preview="previewEnhance" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
+        @save="saveSettings" @enhance-preview="previewEnhance" />
       <RenderCol :job="finalAgg" :results="finals" :busy="busy"
         :can-run="canRender" :final-label="finalLabel"
         @render="startFinal" @stop="stopCurrent" @view="viewFinal" @delete="deleteFinal" @retry="retryFinal"
         @delete-all="deleteAllFinals" />
     </div>
-    <StatusBar :text="statusText" :tone="statusTone" :log="jobLog" :live="liveLogText"
-      @load-log="loadLog" @clear-log="clearLog" />
+    <StatusBar :text="statusText" :tone="statusTone" :log="jobLog" :live="liveLogText" :settings="settings"
+      @load-log="loadLog" @clear-log="clearLog" @update-settings="patchSettings" @save="saveSettings" @select-out-dir="selectOutDir" @open-out-dir="openOut" />
     <ConnectionModal v-if="showConnection" v-model="settings" :status="studioStatus" :caps="studioCaps"
       :models="studioModels" :models-loading="modelsLoading" :models-error="modelsError"
       @save="saveSettings" @check="checkStudio" @ensure="ensureStudio" @refresh-models="loadModels" @close="showConnection = false" />
@@ -357,6 +357,10 @@ async function setSketch(patch) {
 async function updateColumnSettings(patch) {
   settings.value = { ...settings.value, ...(patch || {}) }
   await saveSettings()
+}
+
+function patchSettings(patch) {
+  settings.value = { ...settings.value, ...(patch || {}) }
 }
 
 async function saveSettings() {

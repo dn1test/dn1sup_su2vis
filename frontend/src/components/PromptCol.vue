@@ -97,63 +97,16 @@
         </div>
       </label>
       <div class="text-xs text-slate-400">Seed — зерно случайности. Пусто = случайно каждый раз; число = повтор даёт попиксельно тот же результат.</div>
-      <details class="border rounded">
-        <summary class="px-2 py-1 cursor-pointer text-xs text-slate-600">⚙ Advanced</summary>
-        <div class="p-2 space-y-3">
-          <div class="text-xs text-slate-600 break-all border rounded p-2 bg-slate-50">Папка: {{ modelValue.out_dir }}</div>
-          <label v-if="modelValue.project_state !== 'ready'" class="block">
-            <span class="text-xs text-slate-500">Папка для рендеров</span>
-            <div class="mt-1 flex gap-1">
-              <input :value="modelValue.out_dir" @input="upd('out_dir', $event.target.value)"
-                class="flex-1 min-w-0 border rounded p-1.5 text-xs" />
-              <button class="shrink-0 px-2 py-1 text-xs border rounded hover:bg-slate-100" @click="emit('select-out-dir')">Выбрать…</button>
-              <button class="shrink-0 px-2 py-1 text-xs border rounded hover:bg-slate-100" @click="emit('open-out-dir')">Открыть</button>
-            </div>
-          </label>
-          <div v-else class="block">
-            <span class="text-xs text-slate-500">Папка для рендеров (папка проекта)</span>
-            <div class="mt-1 flex gap-1">
-              <input :value="modelValue.out_dir" readonly
-                class="flex-1 min-w-0 border rounded p-1.5 text-xs bg-slate-50" />
-              <button class="shrink-0 px-2 py-1 text-xs border rounded hover:bg-slate-100" @click="emit('open-out-dir')">Открыть</button>
-            </div>
-          </div>
-          <label class="block">
-            <span class="text-xs text-slate-500">Имя файла: {scene} {seed} {date} {suffix}</span>
-            <input :value="modelValue.name_template" @input="upd('name_template', $event.target.value)"
-              class="mt-1 w-full border rounded p-1.5 text-xs" />
-          </label>
-          <div class="grid grid-cols-2 gap-2">
-            <label class="block">
-              <span class="text-xs text-slate-500">Суффикс</span>
-              <input :value="modelValue.suffix" @input="upd('suffix', $event.target.value)"
-                class="mt-1 w-full border rounded p-1.5" />
-            </label>
-            <label class="block">
-              <span class="text-xs text-slate-500">Расширение</span>
-              <select :value="modelValue.ext" @change="updSave('ext', $event.target.value)"
-                class="mt-1 w-full border rounded p-1.5">
-                <option value="jpg">jpg</option>
-                <option value="png">png</option>
-              </select>
-            </label>
-          </div>
-          <label class="block">
-            <span class="text-xs text-slate-500">Память (Memory)</span>
-            <select :value="modelValue.memory_mode || 'balanced'" @change="updSave('memory_mode', $event.target.value)"
-              class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
-              <option value="auto">auto</option>
-              <option value="fast">fast</option>
-              <option value="balanced">balanced</option>
-              <option value="low_vram">low_vram</option>
-            </select>
-          </label>
-          <div class="flex gap-2">
-            <button class="flex-1 px-3 py-2 rounded bg-slate-900 text-white text-xs hover:bg-slate-700" @click="emit('save')">Сохранить</button>
-          </div>
-          <div class="text-xs text-slate-400">Подключение (URL, ключ, модель) — кнопка «Подключение» в шапке.</div>
-        </div>
-      </details>
+      <label class="block">
+        <span class="text-xs text-slate-500">Память (Memory)</span>
+        <select :value="modelValue.memory_mode || 'balanced'" @change="updSave('memory_mode', $event.target.value)"
+          class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+          <option value="auto">auto</option>
+          <option value="fast">fast</option>
+          <option value="balanced">balanced</option>
+          <option value="low_vram">low_vram</option>
+        </select>
+      </label>
     </div>
   </div>
 </template>
@@ -161,7 +114,7 @@
 <script setup>
 import { computed } from 'vue'
 const props = defineProps({ modelValue: { type: Object, required: true }, enhancePreview: { type: Object, default: null } })
-const emit = defineEmits(['update:modelValue', 'save', 'enhance-preview', 'select-out-dir', 'open-out-dir'])
+const emit = defineEmits(['update:modelValue', 'save', 'enhance-preview'])
 const RES_OPTIONS = [256, 512, 768, 1024, 1280, 1536, 2048]
 const MODES = [
   { id: 'sketch', label: 'Эскиз', title: 'Точный размер эскиза сцены' },

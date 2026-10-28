@@ -6,7 +6,7 @@ require 'time'
 
 module Dn1sup
   module Su2vis
-    # Журнал работы: JSON-строки в su2vis.log рядом с результатами.
+    # Журнал работы: JSON-строки в su2vis.log рядом с настройками проекта.
     # События: job_start / scene_done / job_done (status, error, длительности).
     module Log
       module_function
@@ -17,8 +17,16 @@ module Dn1sup
         @path_override = p
       end
 
+      # Журнал — в папке настроек проекта (<имя>_su2vis/su2vis.log, рядом
+      # с su2vis.yaml), а не в out/ (иначе «удалить все» в галерее и
+      # ручная чистка out/ уносят историю). Модель не сохранена —
+      # фолбэк в legacy_out_dir.
       def path
-        @path_override || File.join(Settings.out_dir, 'su2vis.log')
+        return @path_override if @path_override
+
+        d = Settings.project_dir
+        d = Settings.legacy_out_dir if d.nil? || d.to_s.empty?
+        File.join(d.to_s, 'su2vis.log')
       end
 
       def append(event, data = {})
