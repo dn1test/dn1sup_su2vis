@@ -144,6 +144,17 @@
       <div class="text-xs font-medium">Эскиз-референс для модели</div>
       <div class="text-xs text-slate-500">Параметры съёма эскиза, который уйдёт референсом в модель.</div>
       <label class="block">
+        <span class="text-xs text-slate-500">Стиль отображения</span>
+        <select :value="sketch.style || 'model'" @change="setStyle($event.target.value)"
+          class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
+          <option value="model">как в модели</option>
+          <option value="white">белый без теней</option>
+          <option value="sketch">эскиз для референса</option>
+          <option v-if="(sketch.style || 'model') === 'custom'" value="custom" disabled>свой набор…</option>
+        </select>
+      </label>
+      <div class="text-xs text-slate-400">Пресет выставляет галочки ниже пачкой; ручная правка галочки — «свой набор».</div>
+      <label class="block">
         <span class="text-xs text-slate-500">Размер эскиза</span>
         <select :value="sketch.source" @change="upd('source', $event.target.value)"
           class="mt-1 w-full border rounded p-1.5 text-xs bg-white">
@@ -175,6 +186,10 @@
         <input type="checkbox" :checked="sketch.white_bg === true" @change="upd('white_bg', $event.target.checked)" />
         белый фон
       </label>
+      <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer" title="Выключить тени на время снимка — чистый референс без пятен">
+        <input type="checkbox" :checked="sketch.no_shadows === true" @change="upd('no_shadows', $event.target.checked)" />
+        без теней
+      </label>
     </div>
     <MixinCropEditor v-if="editing" :src="editing.data_url" :name="editing.name || editing.id"
       :crop="editing.crop || null" :rotation="editing.rotation || 0"
@@ -205,7 +220,7 @@ const props = defineProps({
   thumbs: { type: Object, default: () => ({}) },
   enabledScenes: { type: Boolean, default: true },
   enabledMixins: { type: Boolean, default: true },
-  sketch: { type: Object, default: () => ({ source: 'hd', preset: '1024x768', thin_lines: true, hide_dims: true, autocrop: false, white_bg: false }) },
+  sketch: { type: Object, default: () => ({ source: 'hd', preset: '1600x1200', style: 'model', thin_lines: true, hide_dims: true, autocrop: false, white_bg: false, no_shadows: false }) },
   items: { type: Array, default: () => [] },
   settings: { type: Object, default: () => ({}) }
 })
@@ -255,9 +270,25 @@ function setListEl(el) {
 }
 onBeforeUnmount(() => { if (listObserver) listObserver.disconnect() })
 
-const sketchPresets = ['800x600', '1024x768', '1280x960']
+const sketchPresets = ['1200x900', '1600x1200', '2000x1500']
+// Стиль отображения — пачка галочек съёма одним кликом:
+// model — всё как в модели, white — белый фон без теней,
+// sketch — максимум чистоты для референса. Ручная правка любой
+// галочки переводит стиль в «свой набор» (custom).
+const STYLE_BUNDLES = {
+  model: { white_bg: false, no_shadows: false, thin_lines: false, hide_dims: false },
+  white: { white_bg: true, no_shadows: true, thin_lines: false, hide_dims: false },
+  sketch: { white_bg: true, no_shadows: true, thin_lines: true, hide_dims: true }
+}
+function setStyle(s) {
+  const b = STYLE_BUNDLES[s]
+  if (!b) return
+  emit('update-sketch', { ...props.sketch, style: s, ...b })
+}
 function upd(key, value) {
-  emit('update-sketch', { ...props.sketch, [key]: value })
+  const next = { ...props.sketch, [key]: value }
+  if (key !== 'style' && (next.style || 'model') !== 'custom') next.style = 'custom'
+  emit('update-sketch', next)
 }
 const editing = ref(null)
 const showOrig = ref({})
@@ -308,17 +339,21 @@ function openSceneBoxes(s) {
   if (!props.thumbs[s.index]) return
   boxScene.value = s.index
 }
-function onSceneBoxesSave({ index, boxes }) {
+function onSceneBoxesSave({ boxes }) {
+  const index = boxScene.value
   boxScene.value = null
-  emit('save-scene-boxes', { index, boxes })
+  if (index === null || index === undefined) return
+  emit('save-scene-boxes', { index, boxes: boxes || [] })
 }
 async function openMixinBoxes(m) {
   boxMixinSrc.value = await transformedUrl(m)
   boxMixin.value = m
 }
-function onMixinBoxesSave({ item, boxes }) {
+function onMixinBoxesSave({ boxes }) {
+  const item = boxMixin.value
   boxMixin.value = null
-  emit('save-mixin-boxes', { item, boxes })
+  if (!item) return
+  emit('save-mixin-boxes', { item, boxes: boxes || [] })
 }
 // Рамки примеси живут в системе координат картинки ПОСЛЕ crop+rotation
 // (так же рисуются на job-копии в Ruby). Готовим такой data-url на canvas.

@@ -281,9 +281,10 @@ async function loadScenes() {
   if (!selected.value.length && scenes.value.length) selected.value = [scenes.value[0].index]
   const next = {}
   const white = settings.value.sketch_white_bg === true
+  const noshadow = settings.value.sketch_no_shadows === true
   const dims = previewDims.value || {}
   for (const s of scenes.value) {
-    const t = await callRuby('scenes_thumb', { index: s.index, white_bg: white, w: dims.w, h: dims.h })
+    const t = await callRuby('scenes_thumb', { index: s.index, white_bg: white, no_shadows: noshadow, w: dims.w, h: dims.h })
     if (t && t.thumb) next[t.index] = t.thumb
   }
   thumbs.value = next
@@ -296,7 +297,7 @@ async function loadAll() {
 
 async function syncView(index) {
   const dims = previewDims.value || {}
-  const r = await callRuby('scenes_sync_view', { index, white_bg: settings.value.sketch_white_bg === true, w: dims.w, h: dims.h })
+  const r = await callRuby('scenes_sync_view', { index, white_bg: settings.value.sketch_white_bg === true, no_shadows: settings.value.sketch_no_shadows === true, w: dims.w, h: dims.h })
   if (r && r.thumb) thumbs.value = { ...thumbs.value, [r.index]: r.thumb }
 }
 
@@ -316,11 +317,13 @@ async function setUseMixins(v) {
 
 const sketchOpts = computed(() => ({
   source: settings.value.sketch_source || 'hd',
-  preset: settings.value.sketch_preset || '1024x768',
+  preset: settings.value.sketch_preset || '1600x1200',
+  style: settings.value.sketch_style || 'model',
   thin_lines: settings.value.sketch_thin_lines !== false,
   hide_dims: settings.value.sketch_hide_dims !== false,
   autocrop: settings.value.sketch_autocrop === true,
-  white_bg: settings.value.sketch_white_bg === true
+  white_bg: settings.value.sketch_white_bg === true,
+  no_shadows: settings.value.sketch_no_shadows === true
 }))
 
 function sketchPayload() {
@@ -328,7 +331,7 @@ function sketchPayload() {
   const m = String(o.preset || '').match(/(\d+)\s*x\s*(\d+)/i)
   return {
     source: o.source, thin_lines: !!o.thin_lines, hide_dims: !!o.hide_dims,
-    autocrop: !!o.autocrop, white_bg: !!o.white_bg,
+    autocrop: !!o.autocrop, white_bg: !!o.white_bg, no_shadows: !!o.no_shadows,
     preset_w: m ? +m[1] : 0, preset_h: m ? +m[2] : 0
   }
 }
@@ -337,11 +340,13 @@ async function setSketch(patch) {
   const p = patch || {}
   if (p.source !== undefined) settings.value.sketch_source = p.source
   if (p.preset !== undefined) settings.value.sketch_preset = p.preset
+  if (p.style !== undefined) settings.value.sketch_style = p.style
   if (p.thin_lines !== undefined) settings.value.sketch_thin_lines = !!p.thin_lines
   if (p.hide_dims !== undefined) settings.value.sketch_hide_dims = !!p.hide_dims
   if (p.autocrop !== undefined) settings.value.sketch_autocrop = !!p.autocrop
-  if (p.white_bg !== undefined) {
-    settings.value.sketch_white_bg = !!p.white_bg
+  if (p.no_shadows !== undefined) settings.value.sketch_no_shadows = !!p.no_shadows
+  if (p.white_bg !== undefined || p.no_shadows !== undefined) {
+    if (p.white_bg !== undefined) settings.value.sketch_white_bg = !!p.white_bg
     await saveSettings()
     await loadScenes()
     return

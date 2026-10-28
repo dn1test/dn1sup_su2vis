@@ -80,41 +80,47 @@ module Dn1sup
         assert_equal((Settings::DEFAULTS.keys - %w[unsloth_key unsloth_autostart unsloth_cmd]).sort, Settings::PROJECT_KEYS.sort)
       end
 
-      test 'проект: папка su2vis_<имя модели> рядом с моделью' do
+      test 'проект: папка <имя модели>_su2vis рядом с моделью' do
         assert(Settings.project_dir_for('').nil?, 'пустой путь — nil')
         assert(Settings.project_dir_for(nil).nil?, 'nil — nil')
         d = Settings.project_dir_for('D:/work/house.skp')
-        assert(d.to_s.end_with?('su2vis_house'), "папка проекта: #{d.inspect}")
+        assert(d.to_s.end_with?('house_su2vis'), "папка проекта: #{d.inspect}")
         assert_equal(File.dirname('D:/work/house.skp'), File.dirname(d.to_s))
       end
 
       test 'проект: имя папки чистится от запрещённых символов Windows' do
-        assert_equal('su2vis_house', Settings.project_dirname_for('D:/work/house.skp'), 'обычное имя')
-        assert_equal('su2vis_a_b_c_d', Settings.project_dirname_for('C:/x/a<b>c"d.skp'), 'запрещённые символы → _')
-        assert_equal('su2vis_my_house', Settings.project_dirname_for('C:/x/my*house.skp'), 'звёздочка → _')
-        assert_equal('su2vis_дом', Settings.project_dirname_for('C:/x/дом. ..skp'), 'хвостовые точки/пробелы')
+        assert_equal('house_su2vis', Settings.project_dirname_for('D:/work/house.skp'), 'обычное имя')
+        assert_equal('a_b_c_d_su2vis', Settings.project_dirname_for('C:/x/a<b>c"d.skp'), 'запрещённые символы → _')
+        assert_equal('my_house_su2vis', Settings.project_dirname_for('C:/x/my*house.skp'), 'звёздочка → _')
+        assert_equal('дом_su2vis', Settings.project_dirname_for('C:/x/дом. ..skp'), 'хвостовые точки/пробелы')
         assert_equal('su2vis', Settings.project_dirname_for(''), 'пустой путь — просто su2vis')
         long = 'у' * 100
-        assert_equal(67, Settings.project_dirname_for("C:/x/#{long}.skp").length, 'кламп длины 60 + su2vis_')
+        assert_equal(67, Settings.project_dirname_for("C:/x/#{long}.skp").length, 'кламп длины 60 + _su2vis')
       end
 
-      test 'проект: project_dirname? признаёт старые и новые папки' do
-        assert(Settings.project_dirname?('su2vis'), 'старое имя su2vis')
-        assert(Settings.project_dirname?('su2vis_house'), 'новое имя su2vis_<модель>')
+      test 'проект: project_dirname? признаёт все форматы' do
+        assert(Settings.project_dirname?('su2vis'), 'самое старое имя su2vis')
+        assert(Settings.project_dirname?('su2vis_house'), 'формат 0.20.x su2vis_<модель>')
+        assert(Settings.project_dirname?('house_su2vis'), 'текущий формат <модель>_su2vis')
         assert(!Settings.project_dirname?('su2visss'), 'похожее, но чужое')
+        assert(!Settings.project_dirname?('housesu2vis'), 'без подчёркивания — чужое')
         assert(!Settings.project_dirname?('out'), 'чужая папка')
         assert(!Settings.project_dirname?(nil), 'nil — не папка проекта')
       end
 
-      test 'проект: фолбэк на старую su2vis/ пока новой нет' do
+      test 'проект: фолбэк на старые su2vis/ и su2vis_<имя>/ пока новой нет' do
         Dir.mktmpdir do |d|
-          newd = File.join(d, 'su2vis_house')
+          newd = File.join(d, 'house_su2vis')
           assert(Settings.legacy_project_fallback(nil).nil?, 'nil — nil')
-          assert(Settings.legacy_project_fallback(newd).nil?, 'без старой папки — nil')
+          assert(Settings.legacy_project_fallback(newd).nil?, 'без старых папок — nil')
           old = File.join(d, 'su2vis')
           Settings.init_project(old)
           assert_equal(old, Settings.legacy_project_fallback(newd), 'старая su2vis/ с настройками должна вернуться')
           assert(Settings.legacy_project_fallback(old).nil?, 'папка su2vis сама себе проект — фолбэк не нужен')
+          # Формат 0.20.x перекрывает древний, но уступает готовому новому.
+          old20 = File.join(d, 'su2vis_house')
+          Settings.init_project(old20)
+          assert_equal(old20, Settings.legacy_project_fallback(newd), 'su2vis_house/ должна вернуться')
           Settings.init_project(newd)
           assert(Settings.legacy_project_fallback(newd).nil?, 'новая папка уже готова — фолбэк не нужен')
         end
@@ -132,9 +138,10 @@ module Dn1sup
           end
           all = Settings.init_project(proj)
           assert_equal('ready', all['project_state'], 'после init — ready')
-          assert(File.file?(File.join(proj, 'su2vis.json')), 'файл проекта не записан')
+          assert(File.file?(File.join(proj, 'su2vis.yaml')), 'файл проекта yaml не записан')
+          assert(!File.file?(File.join(proj, 'su2vis.json')), 'старого json быть не должно')
           assert(File.directory?(File.join(proj, 'out')), 'out не создан')
-          doc = JSON.parse(File.read(File.join(proj, 'su2vis.json'), encoding: 'UTF-8'))
+          doc = Settings.read_project_doc(proj)
           assert(!doc.key?('unsloth_key'), 'ключ не должен лежать в файле проекта')
           assert(!doc.key?('unsloth_autostart'), 'autostart не должен лежать в файле проекта')
           assert(!doc.key?('unsloth_cmd'), 'cmd не должен лежать в файле проекта')
@@ -142,7 +149,7 @@ module Dn1sup
           # save в готовый проект пишет только файл, ключ/global не трогаем:
           # в hash нет глобальных ключей и out_dir — defaults не пишутся.
           Settings.save({ 'prompt' => 'тест-промпт', 'bogus_key' => 1 }, proj)
-          doc2 = JSON.parse(File.read(File.join(proj, 'su2vis.json'), encoding: 'UTF-8'))
+          doc2 = Settings.read_project_doc(proj)
           assert_equal('тест-промпт', doc2['prompt'], 'save не записал в файл проекта')
           assert(!doc2.key?('bogus_key'), 'мусорный ключ попал в файл')
           back = Settings.all(proj)
@@ -173,11 +180,15 @@ module Dn1sup
           rescue StandardError => e
             assert(e.message.include?('не сохранена'), "не тот отказ: #{e.message}")
           end
-          # новое имя su2vis_<модель> тоже удаляется
-          proj2 = File.join(d, 'su2vis_house')
+          # новое имя <модель>_su2vis тоже удаляется, старый формат — тоже
+          proj2 = File.join(d, 'house_su2vis')
           Settings.init_project(proj2)
           Settings.delete_project(proj2)
-          assert(!File.exist?(proj2), 'папка su2vis_house не удалилась')
+          assert(!File.exist?(proj2), 'папка house_su2vis не удалилась')
+          proj3 = File.join(d, 'su2vis_house')
+          Settings.init_project(proj3)
+          Settings.delete_project(proj3)
+          assert(!File.exist?(proj3), 'старая папка su2vis_house не удалилась')
         end
       end
 
@@ -845,16 +856,29 @@ module Dn1sup
 
       test 'эскиз-референс: настройки съёма по умолчанию и coerce' do
         assert_equal('hd', Settings::DEFAULTS['sketch_source'], 'дефолт sketch_source')
+        assert_equal('1600x1200', Settings::DEFAULTS['sketch_preset'], 'дефолт sketch_preset')
+        assert_equal('model', Settings::DEFAULTS['sketch_style'], 'дефолт sketch_style')
+        assert_equal(Settings::SKETCH_PRESETS, %w[1200x900 1600x1200 2000x1500], 'только 1200/1600/2000')
         assert_equal(true, Settings::DEFAULTS['sketch_thin_lines'], 'дефолт thin_lines')
         assert_equal(true, Settings::DEFAULTS['sketch_hide_dims'], 'дефолт hide_dims')
+        assert_equal(false, Settings::DEFAULTS['sketch_white_bg'], 'дефолт white_bg выкл')
+        assert_equal(false, Settings::DEFAULTS['sketch_no_shadows'], 'дефолт no_shadows выкл')
         assert(Settings::PROJECT_KEYS.include?('sketch_source'), 'sketch_source должен быть per-file')
+        assert(Settings::PROJECT_KEYS.include?('sketch_style'), 'sketch_style должен быть per-file')
+        assert(Settings::PROJECT_KEYS.include?('sketch_no_shadows'), 'sketch_no_shadows должен быть per-file')
         assert_equal('view', Settings.coerce('sketch_source', 'view'))
         assert_equal('preset', Settings.coerce('sketch_source', 'preset'))
         assert_equal('hd', Settings.coerce('sketch_source', 'мусор'), 'мусор — hd')
-        assert_equal('1024x768', Settings.coerce('sketch_preset', '1024x768'))
-        assert_equal('1024x768', Settings.coerce('sketch_preset', 'мусор'), 'чужой пресет — дефолт')
+        assert_equal('1600x1200', Settings.coerce('sketch_preset', '1600x1200'))
+        assert_equal('1600x1200', Settings.coerce('sketch_preset', '1024x768'), 'старый пресет — дефолт')
+        assert_equal('1600x1200', Settings.coerce('sketch_preset', 'мусор'), 'чужой пресет — дефолт')
+        assert_equal('white', Settings.coerce('sketch_style', 'white'))
+        assert_equal('custom', Settings.coerce('sketch_style', 'custom'))
+        assert_equal('model', Settings.coerce('sketch_style', 'мусор'), 'чужой стиль — model')
         assert_equal(false, Settings.coerce('sketch_thin_lines', false))
         assert_equal(true, Settings.coerce('sketch_hide_dims', 'true'))
+        assert_equal(true, Settings.coerce('sketch_no_shadows', 'true'))
+        assert_equal(false, Settings.coerce('sketch_no_shadows', '0'))
         assert_equal(false, Settings::DEFAULTS['sketch_autocrop'], 'дефолт autocrop выкл')
         assert(Settings::PROJECT_KEYS.include?('sketch_autocrop'), 'sketch_autocrop должен быть per-file')
         assert_equal(true, Settings.coerce('sketch_autocrop', true))
@@ -864,8 +888,48 @@ module Dn1sup
       test 'эскиз-референс: capture/capture_all принимают параметры съёма' do
         assert(Scenes.method(:capture).parameters.include?([:key, :thin_lines]), 'у capture нет thin_lines:')
         assert(Scenes.method(:capture).parameters.include?([:key, :hide_dims]), 'у capture нет hide_dims:')
+        assert(Scenes.method(:capture).parameters.include?([:key, :white_bg]), 'у capture нет white_bg:')
+        assert(Scenes.method(:capture).parameters.include?([:key, :no_shadows]), 'у capture нет no_shadows:')
         assert(Scenes.method(:capture_all).parameters.include?([:key, :sketch]), 'у capture_all нет sketch:')
+        assert(Scenes.method(:capture_hd).parameters.include?([:key, :no_shadows]), 'у capture_hd нет no_shadows:')
+        assert(Scenes.method(:thumbnail).parameters.include?([:key, :no_shadows]), 'у thumbnail нет no_shadows:')
         assert(Scenes.method(:with_dims_hidden).parameters.include?([:key, :hide_dims]), 'у with_dims_hidden нет hide_dims:')
+        assert(Scenes.method(:with_dims_hidden).parameters.include?([:key, :no_shadows]), 'у with_dims_hidden нет no_shadows:')
+      end
+
+      test 'проект: yaml-хранилище и переезд со старого su2vis.json' do
+        Dir.mktmpdir do |d|
+          proj = File.join(d, 'house_su2vis')
+          FileUtils.mkdir_p(proj)
+          File.write(File.join(proj, 'su2vis.json'), JSON.generate({ 'prompt' => 'из json', 'sketch_preset' => '800x600' }), encoding: 'UTF-8')
+          assert_equal('ready', Settings.project_state(proj), 'старый json — тоже ready')
+          back = Settings.all(proj)
+          assert_equal('из json', back['prompt'], 'all читает старый json')
+          assert_equal('1600x1200', back['sketch_preset'], 'старый пресет нормализуется в дефолт')
+          Settings.save({ 'prompt' => 'новый' }, proj)
+          assert(File.file?(File.join(proj, 'su2vis.yaml')), 'запись переехала в yaml')
+          yaml_text = File.read(File.join(proj, 'su2vis.yaml'), encoding: 'UTF-8')
+          assert(yaml_text.include?('новый'), 'yaml содержит новое значение')
+          assert_equal('новый', Settings.read_project_doc(proj)['prompt'], 'yaml читается обратно')
+          assert_equal('новый', Settings.all(proj)['prompt'], 'all читает yaml')
+        end
+      end
+
+      test 'проект: бэкап рамок сцен в yaml переживает выход' do
+        Dir.mktmpdir do |d|
+          proj = File.join(d, 'house_su2vis')
+          assert_equal([], Settings.scene_boxes_backup(nil, 0), 'nil-папка — пусто')
+          assert_equal([], Settings.scene_boxes_backup(proj, 3), 'нет файла — пусто')
+          boxes = [{ 'x' => 0.1, 'y' => 0.2, 'w' => 0.3, 'h' => 0.4, 'label' => 'диван' }]
+          Settings.save_scene_boxes_backup(proj, 3, boxes)
+          assert(File.file?(File.join(proj, 'su2vis.yaml')), 'бэкап создал yaml')
+          got = Settings.scene_boxes_backup(proj, 3)
+          assert_equal(boxes, got, 'бэкап вернулся')
+          assert_equal([], Settings.scene_boxes_backup(proj, 4), 'чужая сцена — пусто')
+          assert_equal('ready', Settings.project_state(proj), 'один бэкап — проект ready')
+          Settings.save_scene_boxes_backup(proj, 3, [])
+          assert_equal([], Settings.scene_boxes_backup(proj, 3), 'очистка стирает бэкап')
+        end
       end
 
       test 'автокроп: рамка контента на синтетике и roundtrip' do

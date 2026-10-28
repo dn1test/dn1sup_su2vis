@@ -14,8 +14,12 @@ module Dn1sup
     module Settings
       SECTION = 'dn1sup_su2vis'
 
-      PROJECT_DIRNAME = 'su2vis'
-      PROJECT_FILENAME = 'su2vis.json'
+      PROJECT_DIRNAME = 'su2vis'.freeze
+      PROJECT_FILENAME = 'su2vis.yaml'.freeze
+      LEGACY_PROJECT_FILENAME = 'su2vis.json'.freeze
+      # Рамки сцен — бэкап атрибутов страниц: переживают выход без
+      # сохранения .skp (ключ вне DEFAULTS, только в файле проекта).
+      SCENE_BOXES_KEY = 'scene_boxes'.freeze
 
       # Только ключ, автозапуск и путь бинарника — глобальные (машинные).
       # Остальное — в папке проекта.
@@ -24,12 +28,14 @@ module Dn1sup
       DEFAULTS = {
         'prompt' => 'Photorealistic render based on the provided sketch. Keep the exact same composition, geometry, proportions and scale of every object. Replace any silhouette scale figures with a real standing person in casual clothing (jeans, t-shirt) for human scale. Soft natural daylight, architectural photography, ultra-detailed, 8k, magazine quality. No watermarks, no logos, no text, no captions, no signatures, no letters, no words anywhere in the image. Clean editorial photograph without any overlay text.',
         'seed' => -1,
-        'sketch_preset' => '1024x768',
+        'sketch_preset' => '1600x1200',
         'sketch_source' => 'hd',
+        'sketch_style' => 'model',
         'sketch_thin_lines' => true,
         'sketch_hide_dims' => true,
         'sketch_autocrop' => false,
         'sketch_white_bg' => false,
+        'sketch_no_shadows' => false,
         'preview_variants' => 1,
         'preview_random_seeds' => true,
         'final_mode' => 'sketch',
@@ -65,7 +71,7 @@ module Dn1sup
         'unsloth_gguf' => 'flux-3-image-klein-UD-Q4_K_XL.gguf'
       }.freeze
 
-      SKETCH_PRESETS = %w[800x600 1024x768 1280x960].freeze
+      SKETCH_PRESETS = %w[1200x900 1600x1200 2000x1500].freeze
       PREVIEW_PRESETS = %w[512x384 640x480 768x576].freeze
       PREVIEW_SIZES = [128, 256, 512, 768].freeze
 
@@ -84,16 +90,18 @@ module Dn1sup
         ''
       end
 
-      # Имя папки проекта из имени модели: su2vis_<имя .skp>. Запрещённые в
+      # Имя папки проекта из имени модели: <имя .skp>_su2vis. Запрещённые в
       # Windows символы и хвосты «._ » чистятся, длина клампится — иначе
       # FileUtils.mkdir_p на такой папке упадёт. Пустое имя (некуда чистить) —
-      # просто su2vis.
+      # просто su2vis. Старый формат su2vis_<имя> признаётся как чужой-не-свой:
+      # чтение/удаление его понимает (project_dirname?), новые папки — только
+      # <имя>_su2vis.
       def project_dirname_for(model_path)
         safe = File.basename(model_path.to_s, '.*')
                 .gsub(/[\/\\:*?"<>|]+/, '_')
                 .gsub(/[.\s]+\z/, '')
                 .strip[0, 60].to_s
-        safe.empty? ? PROJECT_DIRNAME : "#{PROJECT_DIRNAME}_#{safe}"
+        safe.empty? ? PROJECT_DIRNAME : "#{safe}_#{PROJECT_DIRNAME}"
       end
 
       # Папка проекта для пути модели: <dir модели>/su2vis_<имя модели>.
@@ -105,23 +113,31 @@ module Dn1sup
         File.join(File.dirname(p), project_dirname_for(p))
       end
 
-      # su2vis (старые проекты) или su2vis_* (новые, с именем модели).
+      # Папка проекта: su2vis (самые старые), su2vis_* (формат 0.20.x),
+      # *_su2vis (текущий формат). Чужой путь отклоняется.
       def project_dirname?(base)
         b = base.to_s
-        b == PROJECT_DIRNAME || b.start_with?("#{PROJECT_DIRNAME}_")
+        b == PROJECT_DIRNAME || b.start_with?("#{PROJECT_DIRNAME}_") ||
+          b.end_with?("_#{PROJECT_DIRNAME}")
       end
 
       # Фолбэк для проектов, созданных до суффикса с именем модели: новая
-      # папка su2vis_<имя> ещё не создана, а старая su2vis/ с su2vis.json
-      # лежит рядом — работаем в ней, ничего не теряется. Готовая новая
-      # папка всегда перекрывает старую.
+      # папка <имя>_su2vis ещё не создана, а старая su2vis/ (или su2vis_<имя>/)
+      # с настройками лежит рядом — работаем в ней, ничего не теряется.
+      # Готовая новая папка всегда перекрывает старую.
       def legacy_project_fallback(new_dir)
         return nil if new_dir.nil?
         return nil if File.basename(new_dir.to_s) == PROJECT_DIRNAME
-        return nil if File.file?(project_settings_path(new_dir))
+        return nil if project_settings_exist?(new_dir)
 
-        old = File.join(File.dirname(new_dir.to_s), PROJECT_DIRNAME)
-        File.file?(project_settings_path(old)) ? old : nil
+        dir = File.dirname(new_dir.to_s)
+        base = File.basename(new_dir.to_s)
+        # 0.20.x: su2vis_<имя> — ищем пару к новой <имя>_su2vis.
+        old_prefixed = File.join(dir, "#{PROJECT_DIRNAME}_#{base.sub(/_#{PROJECT_DIRNAME}\z/, '')}")
+        return old_prefixed if project_settings_exist?(old_prefixed)
+
+        old_plain = File.join(dir, PROJECT_DIRNAME)
+        project_settings_exist?(old_plain) ? old_plain : nil
       end
 
       # Папка проекта активной модели (nil — модель не сохранена).
@@ -136,6 +152,109 @@ module Dn1sup
         File.join(dir.to_s, PROJECT_FILENAME)
       end
 
+      # Путь настроек 0.20.x (su2vis.json): читаем при переезде,
+      # пишем всегда новый su2vis.yaml.
+      def legacy_settings_path(dir)
+        File.join(dir.to_s, LEGACY_PROJECT_FILENAME)
+      end
+
+      # Файл настроек есть в любом формате (yaml — новый, json — переезд).
+      def project_settings_exist?(dir)
+        return false if dir.nil?
+
+        File.file?(project_settings_path(dir)) || File.file?(legacy_settings_path(dir))
+      end
+
+      # Существующий файл настроек (иначе путь нового yaml).
+      def project_settings_existing_path(dir)
+        sp = project_settings_path(dir)
+        return sp if File.file?(sp)
+
+        lp = legacy_settings_path(dir)
+        File.file?(lp) ? lp : sp
+      end
+
+      # Весь документ настроек: новый yaml предпочтителен, старый json —
+      # для переезда (следующая запись переедет в yaml). Мусор — {}.
+      def read_project_doc(dir)
+        return {} if dir.nil?
+
+        sp = project_settings_path(dir)
+        lp = legacy_settings_path(dir)
+        path = File.file?(sp) ? sp : (File.file?(lp) ? lp : nil)
+        return {} if path.nil?
+
+        parse_project_doc(File.read(path, encoding: 'UTF-8'))
+      rescue StandardError
+        {}
+      end
+
+      def parse_project_doc(str)
+        doc = nil
+        begin
+          require 'psych'
+          doc = Psych.safe_load(str)
+        rescue StandardError
+          doc = nil
+        end
+        unless doc.is_a?(Hash)
+          begin
+            doc = JSON.parse(str)
+          rescue StandardError
+            doc = nil
+          end
+        end
+        doc.is_a?(Hash) ? doc : {}
+      end
+
+      def dump_project_doc(doc)
+        h = doc.is_a?(Hash) ? doc : {}
+        begin
+          require 'psych'
+          Psych.dump(h)
+        rescue StandardError
+          JSON.pretty_generate(h)
+        end
+      end
+
+      def write_project_doc(dir, doc)
+        FileUtils.mkdir_p(dir.to_s)
+        File.write(project_settings_path(dir), dump_project_doc(doc), encoding: 'UTF-8')
+        doc.is_a?(Hash) ? doc : {}
+      end
+
+      # Бэкап рамок сцен (Scenes.save_boxes дублирует сюда): переживает
+      # выход без сохранения .skp. Ключ — индекс сцены строкой.
+      def scene_boxes_backup(dir, index)
+        return [] if dir.nil? || dir.to_s.empty?
+
+        doc = read_project_doc(dir)
+        map = doc.is_a?(Hash) ? doc[SCENE_BOXES_KEY] : nil
+        arr = map.is_a?(Hash) ? map[index.to_i.to_s] : nil
+        arr.is_a?(Array) ? arr : []
+      rescue StandardError
+        []
+      end
+
+      def save_scene_boxes_backup(dir, index, boxes)
+        return [] if dir.nil? || dir.to_s.empty?
+
+        doc = read_project_doc(dir)
+        map = doc[SCENE_BOXES_KEY]
+        map = {} unless map.is_a?(Hash)
+        arr = boxes.is_a?(Array) ? boxes : []
+        if arr.empty?
+          map.delete(index.to_i.to_s)
+        else
+          map[index.to_i.to_s] = arr
+        end
+        doc[SCENE_BOXES_KEY] = map
+        write_project_doc(dir, doc)
+        arr
+      rescue StandardError
+        []
+      end
+
       def project_out_dir(dir)
         File.join(dir.to_s, 'out')
       end
@@ -145,7 +264,7 @@ module Dn1sup
       def project_state(dir = :auto)
         d = dir == :auto ? project_dir : dir
         return 'unsaved' if d.nil? || d.to_s.empty?
-        return 'ready' if File.file?(project_settings_path(d))
+        return 'ready' if project_settings_exist?(d)
 
         'missing'
       end
@@ -160,7 +279,7 @@ module Dn1sup
           'model_name' => mp.empty? ? '' : File.basename(mp, '.skp'),
           'project_dir' => d.to_s,
           'out_dir' => d.nil? ? legacy_out_dir : project_out_dir(d),
-          'settings_path' => d.nil? ? '' : project_settings_path(d)
+          'settings_path' => d.nil? ? '' : project_settings_existing_path(d)
         }
       end
 
@@ -190,7 +309,7 @@ module Dn1sup
 
       def all(dir = :auto)
         d = dir == :auto ? project_dir : dir
-        if !d.nil? && File.file?(project_settings_path(d))
+        if !d.nil? && project_settings_exist?(d)
           h = {}
           DEFAULTS.each do |k, v|
             stored = GLOBAL_KEYS.include?(k) ? Sketchup.read_default(SECTION, k, nil) : nil
@@ -217,7 +336,7 @@ module Dn1sup
 
       def save(hash, dir = :auto)
         d = dir == :auto ? project_dir : dir
-        ready = !d.nil? && File.file?(project_settings_path(d))
+        ready = !d.nil? && project_settings_exist?(d)
         h = hash.is_a?(Hash) ? hash : {}
         if ready
           proj = {}
@@ -246,12 +365,12 @@ module Dn1sup
         all(dir)
       end
 
-      # Создать папку проекта: su2vis/ + out/, затравка su2vis.json из
+      # Создать папку проекта: <имя>_su2vis/ + out/, затравка su2vis.yaml из
       # текущих эффективных настроек (включая несохранённые правки legacy).
       # Несохранённая модель — исключение: сначала сохранить .skp.
       def init_project(dir = :auto)
         d = dir == :auto ? project_dir : dir
-        raise 'модель не сохранена: сохраните .skp (Файл → Сохранить), затем создайте su2vis/' if d.nil? || d.to_s.empty?
+        raise 'модель не сохранена: сохраните .skp (Файл → Сохранить), затем создайте <имя>_su2vis/' if d.nil? || d.to_s.empty?
 
         FileUtils.mkdir_p(d.to_s)
         FileUtils.mkdir_p(project_out_dir(d))
@@ -262,9 +381,10 @@ module Dn1sup
         all(dir)
       end
 
-      # Удаление папки проекта: только su2vis/ или su2vis_<имя>/ (проверка
-      # имени), рекурсивно. После удаления all() отдаёт legacy/дефолт — панель
-      # снова предложит создать папку рядом с файлом. Чужой путь отклоняется.
+      # Удаление папки проекта: только su2vis/, su2vis_<имя>/ (старый
+      # формат) или <имя>_su2vis/ (проверка имени), рекурсивно. После удаления
+      # all() отдаёт legacy/дефолт — панель снова предложит создать папку
+      # рядом с файлом. Чужой путь отклоняется.
       def delete_project(dir = :auto)
         d = dir == :auto ? project_dir : dir
         raise 'модель не сохранена: удалять нечего' if d.nil? || d.to_s.empty?
@@ -276,7 +396,7 @@ module Dn1sup
 
       def out_dir
         d = project_dir
-        return project_out_dir(d) if !d.nil? && File.file?(project_settings_path(d))
+        return project_out_dir(d) if !d.nil? && project_settings_exist?(d)
 
         legacy_out_dir
       end
@@ -287,13 +407,11 @@ module Dn1sup
         File.join(ENV['USERPROFILE'] || Dir.home, 'Documents', 'dn1sup_su2vis', 'out')
       end
 
-      # Значение ключа из файла проекта (nil — нет файла/ключа/битый JSON).
+      # Значение ключа из файла проекта (nil — нет файла/ключа/битый файл).
+      # Старый su2vis.json читается для переезда в yaml.
       def project_file_value(dir, key)
-        sp = project_settings_path(dir)
-        return nil unless File.file?(sp)
-
-        doc = JSON.parse(File.read(sp, encoding: 'UTF-8'))
-        return nil unless doc.is_a?(Hash) && doc.key?(key.to_s)
+        doc = read_project_doc(dir)
+        return nil unless doc.key?(key.to_s)
 
         doc[key.to_s]
       rescue StandardError
@@ -301,17 +419,10 @@ module Dn1sup
       end
 
       def write_project_file(dir, hash)
-        sp = project_settings_path(dir)
-        cur = {}
-        if File.file?(sp)
-          doc = JSON.parse(File.read(sp, encoding: 'UTF-8')) rescue nil
-          cur = doc if doc.is_a?(Hash)
-        end
+        cur = read_project_doc(dir)
         h = hash.is_a?(Hash) ? hash : {}
         h.each { |k, v| cur[k.to_s] = v if PROJECT_KEYS.include?(k.to_s) }
-        FileUtils.mkdir_p(dir.to_s)
-        File.write(sp, JSON.pretty_generate(cur), encoding: 'UTF-8')
-        cur
+        write_project_doc(dir, cur)
       end
 
       def get(key)
@@ -348,6 +459,7 @@ module Dn1sup
         when 'seed' then value.to_i
         when 'allow_oversized', 'use_scenes', 'use_mixins',
              'sketch_thin_lines', 'sketch_hide_dims', 'sketch_autocrop', 'sketch_white_bg',
+             'sketch_no_shadows',
              'unsloth_autostart', 'geometry_lock', 'preview_random_seeds',
              'studio_cpu_offload', 'studio_live_preview' then value == true || value.to_s == 'true'
         # Студия klein принимает только auto (поле не шлём): edit 400,
@@ -362,8 +474,11 @@ module Dn1sup
           %w[both final].include?(s) ? s : 'both'
         when 'unsloth_cmd' then value.to_s.strip.empty? ? 'unsloth' : value.to_s.strip
         when 'sketch_source' then %w[hd view preset].include?(value.to_s) ? value.to_s : 'hd'
+        when 'sketch_style'
+          s = value.to_s.strip.downcase
+          %w[model white sketch custom].include?(s) ? s : 'model'
         when 'final_mode' then %w[sketch 1k 2k custom].include?(value.to_s) ? value.to_s : 'sketch'
-        when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1024x768'
+        when 'sketch_preset' then SKETCH_PRESETS.include?(value.to_s) ? value.to_s : '1600x1200'
         when 'final_w', 'final_h' then value.to_i.clamp(256, 2048)
         when 'preview_variants' then value.to_i.clamp(1, 4)
         when 'strength', 'final_strength' then value.to_f

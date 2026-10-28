@@ -25,7 +25,7 @@ module Dn1sup
         pages = model.pages
         current = pages.selected_page
         pages.map.with_index do |p, i|
-          { name: p.name, index: i, current: p == current, boxes: norm_boxes(read_boxes_json(p)) }
+          { name: p.name, index: i, current: p == current, boxes: page_boxes(p, i) }
         end
       end
 
@@ -72,7 +72,18 @@ module Dn1sup
         return [] unless model
         page = model.pages[index.to_i]
         return [] unless page
-        norm_boxes(read_boxes_json(page))
+        page_boxes(page, index.to_i)
+      end
+
+      # Рамки страницы: атрибуты — первичны; пусто (модель не сохраняли
+      # после правок / вышли без .skp) — бэкап из su2vis.yaml проекта.
+      def page_boxes(page, index)
+        bs = norm_boxes(read_boxes_json(page))
+        return bs unless bs.empty?
+
+        norm_boxes(Settings.scene_boxes_backup(Settings.project_dir, index))
+      rescue StandardError
+        []
       end
 
       def save_boxes(index, boxes)
@@ -82,6 +93,11 @@ module Dn1sup
         raise "сцена #{index} не найдена" unless page
         bs = norm_boxes(boxes)
         page.set_attribute(ATTR_DICT, 'boxes_json', JSON.generate(bs))
+        begin
+          Settings.save_scene_boxes_backup(Settings.project_dir, index.to_i, bs)
+        rescue StandardError
+          nil
+        end
         bs
       end
 
@@ -103,7 +119,8 @@ module Dn1sup
       # thin_lines: выключить силуэты на время снимка (тонкие линии 1px).
       # hide_dims: прятать размерные линии (иначе летят в референс модели).
       # white_bg: убрать любой фон (небо/земля/фон) — только белый.
-      def capture(index, w = nil, h = nil, thin_lines: false, hide_dims: true, white_bg: false)
+      # no_shadows: выключить тени на время снимка (чистый референс).
+      def capture(index, w = nil, h = nil, thin_lines: false, hide_dims: true, white_bg: false, no_shadows: false)
         model = Sketchup.active_model
         raise 'нет активной модели' unless model
         pages = model.pages
@@ -120,7 +137,7 @@ module Dn1sup
           opts = { filename: path }
           opts[:width] = w.to_i if w && w.to_i > 0
           opts[:height] = h.to_i if h && h.to_i > 0
-          ok = with_dims_hidden(model, thin_lines: thin_lines, hide_dims: hide_dims, white_bg: white_bg) { Sketchup.active_model.active_view.write_image(opts) }
+          ok = with_dims_hidden(model, thin_lines: thin_lines, hide_dims: hide_dims, white_bg: white_bg, no_shadows: no_shadows) { Sketchup.active_model.active_view.write_image(opts) }
           raise "write_image не удался для сцены #{page.name}" unless ok && File.file?(path)
           path
         ensure
@@ -140,12 +157,16 @@ module Dn1sup
       # пишем только те, что есть, ошибки игнорируем.
       WHITE_BG_COLOR_KEYS = %w[BackgroundColor SkyColor GroundColor HorizonColor].freeze
       WHITE_BG_HIDE_KEYS = %w[DrawGround DrawHorizon].freeze
+      # Ключ отключения теней в RenderingOptions (как в диалоге Styles).
+      # Неизвестный ключ — исключение, поэтому всё через rescue, как с фоном.
+      SHADOW_KEY = 'DisplayShadows'.freeze
 
-      def with_dims_hidden(model, thin_lines: false, hide_dims: true, white_bg: false)
+      def with_dims_hidden(model, thin_lines: false, hide_dims: true, white_bg: false, no_shadows: false)
         hidden = []
         ro = model.rendering_options
         prev_sil = ro['DrawSilhouettes']
         prev_bg = {}
+        prev_shadow = :missing
         op = false
         model.start_operation('su2vis: снимок сцены', true)
         op = true
@@ -159,6 +180,14 @@ module Dn1sup
           end
           ro['DrawSilhouettes'] = false if thin_lines
           prev_bg = apply_white_bg(ro) if white_bg
+          if no_shadows
+            begin
+              prev_shadow = ro[SHADOW_KEY]
+              ro[SHADOW_KEY] = false
+            rescue StandardError
+              prev_shadow = :missing
+            end
+          end
           yield
         ensure
           begin
@@ -168,6 +197,11 @@ module Dn1sup
           end
           begin
             restore_bg(ro, prev_bg) unless prev_bg.empty?
+          rescue StandardError
+            nil
+          end
+          begin
+            ro[SHADOW_KEY] = prev_shadow unless prev_shadow == :missing
           rescue StandardError
             nil
           end
@@ -233,14 +267,14 @@ module Dn1sup
       # без размеров. Пропорции — как у текущего вида (не тянем в 4:3,
       # иначе поплывёт композиция). Сам превью генерируется маленьким
       # (256) из этого же файла — студия даунскейлит референс сама.
-      def capture_hd(index, long_side = 1600, thin_lines: true, hide_dims: true, white_bg: false)
+      def capture_hd(index, long_side = 1600, thin_lines: true, hide_dims: true, white_bg: false, no_shadows: false)
         model = Sketchup.active_model
         raise 'нет активной модели' unless model
         view = model.active_view
         vw, vh = view.vpwidth, view.vpheight
         raise 'неизвестный размер вида' unless vw.to_i > 0 && vh.to_i > 0
         s = long_side.to_f / [vw, vh].max
-        capture(index, (vw * s).round, (vh * s).round, thin_lines: thin_lines, hide_dims: hide_dims, white_bg: white_bg)
+        capture(index, (vw * s).round, (vh * s).round, thin_lines: thin_lines, hide_dims: hide_dims, white_bg: white_bg, no_shadows: no_shadows)
       end
       # Записать текущую камеру окна в сцену (флаг 1 = camera, проверено
       # вживую 2026-10-20). После орбиты без этого эскиз снимается со старого
@@ -274,10 +308,10 @@ module Dn1sup
         v > THUMB_MAX ? THUMB_MAX : v
       end
 
-      def thumbnail(index, w = nil, h = nil, white_bg: false)
+      def thumbnail(index, w = nil, h = nil, white_bg: false, no_shadows: false)
         w = thumb_dim(w, THUMB_W)
         h = thumb_dim(h, THUMB_H)
-        path = capture(index, w, h, thin_lines: true, white_bg: white_bg)
+        path = capture(index, w, h, thin_lines: true, white_bg: white_bg, no_shadows: no_shadows)
         "data:image/png;base64,#{Base64.strict_encode64(File.binread(path))}"
       rescue StandardError
         nil
@@ -289,11 +323,12 @@ module Dn1sup
       # отключаем на время пакета — переключения мгновенные, settle не нужен.
       # Возвращает {index => путь PNG}, в конце возвращает исходную страницу.
       # hd: референс для превью — сцена 1600 по длинной, тонкие линии.
-      # sketch: {source, preset_w, preset_h, thin_lines, hide_dims, autocrop, white_bg}
+      # sketch: {source, preset_w, preset_h, thin_lines, hide_dims, autocrop, white_bg, no_shadows}
       # из настроек колонки «Сцены» — source: hd (1600) / view (размер вида)
       # / preset (точный размер из sketch_preset); hd: true = как source hd.
       # autocrop: резать поля до контента (+5%) перед отдачей в модель.
       # white_bg: белый фон вместо неба/земли/фона модели.
+      # no_shadows: тени выключены на время снимка.
       def capture_all(indexes, hd: false, sketch: nil)
         model = Sketchup.active_model
         raise 'нет активной модели' unless model
@@ -302,6 +337,7 @@ module Dn1sup
         hide = sk.key?('hide_dims') ? sk['hide_dims'] != false : true
         crop = sk['autocrop'] == true
         white = sk['white_bg'] == true
+        noshadow = sk['no_shadows'] == true
         src = sk['source'].to_s
         src = 'hd' if hd || src.empty?
         pw = sk['preset_w'].to_i
@@ -315,11 +351,11 @@ module Dn1sup
           Array(indexes).map(&:to_i).uniq.each do |idx|
             shot =
               if src == 'preset' && pw > 0 && ph > 0
-                capture(idx, pw, ph, thin_lines: thin, hide_dims: hide, white_bg: white)
+                capture(idx, pw, ph, thin_lines: thin, hide_dims: hide, white_bg: white, no_shadows: noshadow)
               elsif src == 'view'
-                capture(idx, nil, nil, thin_lines: thin, hide_dims: hide, white_bg: white)
+                capture(idx, nil, nil, thin_lines: thin, hide_dims: hide, white_bg: white, no_shadows: noshadow)
               else
-                capture_hd(idx, 1600, thin_lines: thin, hide_dims: hide, white_bg: white)
+                capture_hd(idx, 1600, thin_lines: thin, hide_dims: hide, white_bg: white, no_shadows: noshadow)
               end
             shots[idx] = maybe_autocrop(shot, crop)
           end

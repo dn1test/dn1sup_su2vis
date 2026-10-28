@@ -173,10 +173,12 @@ const RATIOS = [
   { id: '1:1', label: 'Квадрат 1:1' },
   { id: '4:3', label: 'Альбом 4:3' },
   { id: '3:4', label: 'Портрет 3:4' },
+  { id: '3:2', label: 'Фото 3:2' },
+  { id: '2:3', label: 'Фото 2:3' },
   { id: '16:9', label: 'Широкий 16:9' },
   { id: '9:16', label: 'Портрет 9:16' }
 ]
-const RATIO_VALS = { '1:1': 1, '4:3': 4 / 3, '3:4': 3 / 4, '16:9': 16 / 9, '9:16': 9 / 16 }
+const RATIO_VALS = { '1:1': 1, '4:3': 4 / 3, '3:4': 3 / 4, '3:2': 3 / 2, '2:3': 2 / 3, '16:9': 16 / 9, '9:16': 9 / 16 }
 function upd(key, value) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
 }

@@ -153,17 +153,19 @@ module Dn1sup
           dlg.add_action_callback('scenes_thumb') do |_ctx, req_id, params|
             data = parse_payload(params)
             white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
+            noshadow = data.key?('no_shadows') ? data['no_shadows'] == true : Settings.get('sketch_no_shadows') == true
             push_event('result', id: req_id,
                        payload: { index: data['index'].to_i,
-                                  thumb: Scenes.thumbnail(data['index'].to_i, data['w'], data['h'], white_bg: white) })
+                                  thumb: Scenes.thumbnail(data['index'].to_i, data['w'], data['h'], white_bg: white, no_shadows: noshadow) })
           end
           dlg.add_action_callback('scenes_sync_view') do |_ctx, req_id, params|
             data = parse_payload(params)
             idx = data['index'].to_i
             ok = Scenes.update_camera(idx)
             white = data.key?('white_bg') ? data['white_bg'] == true : Settings.get('sketch_white_bg') == true
+            noshadow = data.key?('no_shadows') ? data['no_shadows'] == true : Settings.get('sketch_no_shadows') == true
             push_event('result', id: req_id,
-                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx, data['w'], data['h'], white_bg: white) })
+                       payload: { index: idx, ok: ok, thumb: Scenes.thumbnail(idx, data['w'], data['h'], white_bg: white, no_shadows: noshadow) })
           end
           dlg.add_action_callback('scenes_capture') do |_ctx, req_id, params|
             data = parse_payload(params)

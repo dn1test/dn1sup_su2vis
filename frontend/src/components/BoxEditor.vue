@@ -1,14 +1,14 @@
 <template>
   <div class="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" @click.self="emit('cancel')">
-    <div class="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto scroll-slim p-3 space-y-3">
+    <div class="bg-white rounded-lg w-auto max-w-[92vw] max-h-[90vh] overflow-y-auto scroll-slim p-3 space-y-3">
       <div class="flex items-center justify-between">
         <span class="font-medium text-sm">Рамки с описанием — {{ name }}</span>
         <button class="px-2 py-0.5 text-xs border rounded hover:bg-slate-100" @click="emit('cancel')">Закрыть ✕</button>
       </div>
-      <div class="grid md:grid-cols-[1fr_240px] gap-3">
-        <div>
+      <div class="grid md:grid-cols-[minmax(0,1fr)_240px] gap-3">
+        <div class="min-w-0">
           <div class="relative select-none bg-slate-100 rounded overflow-hidden" style="touch-action: none">
-            <img ref="imgRef" :src="src" class="w-full h-auto block" draggable="false" />
+            <img ref="imgRef" :src="src" class="block h-auto w-auto max-w-full max-h-[70vh] mx-auto" draggable="false" />
             <!-- рисование новой рамки: фон под всем -->
             <div class="absolute inset-0" @mousedown="onDownCreate"></div>
             <template v-for="(b, i) in items" :key="'b' + i">
@@ -162,7 +162,7 @@ function reset() {
 }
 function save() {
   const r4 = (v) => Math.round((Number(v) || 0) * 10000) / 10000
-  emit('save', items.value.map((b) => ({ x: r4(b.x), y: r4(b.y), w: r4(b.w), h: r4(b.h), label: String(b.label || '').trim().slice(0, 200) })))
+  emit('save', { boxes: items.value.map((b) => ({ x: r4(b.x), y: r4(b.y), w: r4(b.w), h: r4(b.h), label: String(b.label || '').trim().slice(0, 200) })) })
 }
 function boxStyle(b) {
   return {

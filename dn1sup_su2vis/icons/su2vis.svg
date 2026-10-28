@@ -1,2 +1,2 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-<path d="M6 9H14A2 2 0 0 1 16 11V17A2 2 0 0 1 14 19H6A2 2 0 0 1 4 17V11A2 2 0 0 1 6 9ZM18.5 2.5L19.4 4.8L21.7 5.7L19.4 6.6L18.5 8.9L17.6 6.6L15.3 5.7L17.6 4.8ZM6.2 12.2a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0 -2.8 0ZM4 19L9 12.5L11.8 15.3L13.6 13.5L16 16L16 19Z" fill="#ec4899" fill-rule="evenodd"/></svg>
+<rect x="4" y="9" width="12" height="10" rx="2" fill="#ec4899"/><path d="M18.5 2.5L19.4 4.8L21.7 5.7L19.4 6.6L18.5 8.9L17.6 6.6L15.3 5.7L17.6 4.8Z" fill="#ec4899"/><circle cx="7.6" cy="12.2" r="1.4" fill="#ffffff"/><path d="M4 19L9 12.5L11.8 15.3L13.6 13.5L16 16L16 19Z" fill="#ffffff"/></svg>

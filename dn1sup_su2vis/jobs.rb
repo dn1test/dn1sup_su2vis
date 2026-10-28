@@ -166,11 +166,13 @@ module Dn1sup
               cap = (job.params['sketches'] || {})[idx.to_s] || (job.params['sketches'] || {})[idx]
               # Фолбэк (эскиз не снят на главном потоке): те же параметры
               # съёма, что в колонке «Референс» — тонкие линии, скрытие размеров,
-              # автокроп полей.
+              # белый фон, без теней, автокроп полей.
               if cap.to_s.empty? || !File.file?(cap.to_s)
                 cap = Scenes.capture(idx, nil, nil,
                                      thin_lines: s['sketch_thin_lines'] != false,
-                                     hide_dims: s['sketch_hide_dims'] != false)
+                                     hide_dims: s['sketch_hide_dims'] != false,
+                                     white_bg: s['sketch_white_bg'] == true || s['sketch_white_bg'].to_s == 'true',
+                                     no_shadows: s['sketch_no_shadows'] == true || s['sketch_no_shadows'].to_s == 'true')
                 cap = Scenes.maybe_autocrop(cap, s['sketch_autocrop'] == true ||
                                                  s['sketch_autocrop'].to_s == 'true')
               end
