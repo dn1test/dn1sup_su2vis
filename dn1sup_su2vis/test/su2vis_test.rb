@@ -640,23 +640,21 @@ module Dn1sup
         assert(p.to_s.end_with?('su2vis.log'), "имя журнала: #{p.inspect}")
         # Без модели (стаб) — фолбэк в legacy_out_dir.
         assert_equal(File.join(Settings.legacy_out_dir, 'su2vis.log'), p, 'лог без модели')
-        # В готовом проекте — корень проекта, а не out/.
+        # В готовом проекте — корень проекта, а не out/. Подмена
+        # project_dir — через Method-объект (без alias_method: в живом SU
+        # переименование синглтона роняло мост SystemStackError).
         Dir.mktmpdir do |d|
           proj = File.join(d, 'house_su2vis')
           Settings.init_project(proj)
           out = Settings.project_out_dir(proj)
           assert(out.end_with?('out'), "out: #{out.inspect}")
-          class << Settings
-            alias_method :__orig_project_dir_for_log_test, :project_dir
-          end
+          orig = Settings.method(:project_dir)
           begin
             Settings.define_singleton_method(:project_dir) { proj }
             assert_equal(File.join(proj, 'su2vis.log'), Log.path, 'лог в корне проекта')
             assert(!Log.path.include?('out'), "лог не в out/: #{Log.path.inspect}")
           ensure
-            class << Settings
-              alias_method :project_dir, :__orig_project_dir_for_log_test
-            end
+            Settings.define_singleton_method(:project_dir, orig)
           end
         end
       end
