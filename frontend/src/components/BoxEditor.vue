@@ -14,8 +14,8 @@
             <template v-for="(b, i) in items" :key="'b' + i">
               <div class="absolute border-2 bg-red-500/10 pointer-events-none"
                 :class="i === active ? 'border-red-600' : 'border-red-500/70'" :style="boxStyle(b)"></div>
-              <div class="absolute min-w-4 h-4 px-0.5 rounded-sm bg-white border border-red-500 text-red-600 text-[10px] font-bold flex items-center justify-center pointer-events-none"
-                :style="badgeStyle(b)">{{ i + 1 }}</div>
+              <div class="absolute min-w-4 h-4 px-1 rounded-sm bg-white border border-red-500 text-red-600 text-[10px] leading-4 font-bold flex items-center gap-1 pointer-events-none max-w-[70%] overflow-hidden whitespace-nowrap"
+                :style="badgeStyle(b)" :title="badgeTitle(i, b)"><span class="shrink-0">{{ i + 1 }}</span><span v-if="shortLabel(b)" class="truncate font-medium">{{ shortLabel(b) }}</span></div>
               <!-- перенос рамки -->
               <div class="absolute cursor-move" :style="boxStyle(b)" @mousedown.stop="(e) => onDownMove(e, i)"></div>
               <template v-if="i === active">
@@ -151,6 +151,17 @@ function onUp() {
 }
 function setLabel(i, v) {
   if (items.value[i]) items.value[i].label = v
+}
+// Подпись поверх рамки: короткий текст из промпта, полный — в title.
+// Пусто — только номер как раньше.
+function shortLabel(b) {
+  const s = String(b?.label || '').trim()
+  if (!s) return ''
+  return s.length > 40 ? s.slice(0, 40) + '…' : s
+}
+function badgeTitle(i, b) {
+  const s = String(b?.label || '').trim()
+  return s ? `${i + 1}: ${s}` : String(i + 1)
 }
 function removeBox(i) {
   items.value.splice(i, 1)

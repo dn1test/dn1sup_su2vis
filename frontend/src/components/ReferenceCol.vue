@@ -39,8 +39,8 @@
           <img :src="thumbs[s.index]" class="w-full aspect-[4/3] object-cover bg-slate-200" />
           <template v-for="(b, bi) in (s.boxes || [])" :key="'sb' + bi">
             <div class="absolute border-2 border-red-500 bg-red-500/10 pointer-events-none" :style="boxStyle(b)"></div>
-            <div class="absolute min-w-4 h-4 px-0.5 rounded-sm bg-white border border-red-500 text-red-600 text-[10px] font-bold flex items-center justify-center pointer-events-none"
-              :style="badgeStyle(b)">{{ bi + 1 }}</div>
+            <div class="absolute min-w-4 h-4 px-1 rounded-sm bg-white border border-red-500 text-red-600 text-[10px] leading-4 font-bold flex items-center gap-1 pointer-events-none max-w-[70%] overflow-hidden whitespace-nowrap"
+              :style="badgeStyle(b)" :title="badgeTitle(bi, b)"><span class="shrink-0">{{ bi + 1 }}</span><span v-if="shortLabel(b)" class="truncate font-medium">{{ shortLabel(b) }}</span></div>
           </template>
         </div>
         <div v-else class="w-full aspect-[4/3] bg-slate-200 flex items-center justify-center text-xs text-slate-500">вид сцены</div>
@@ -92,6 +92,11 @@
             <img v-else :src="m.data_url" class="w-full h-auto block" />
             <div v-if="m.crop && (!hasTransform(m) || showOrig[m.id])" class="absolute border-2 border-dashed border-amber-400 bg-amber-400/10 pointer-events-none"
               :style="cropStyle(m.crop)"></div>
+            <template v-if="boxesVisible(m)" v-for="(b, bi) in (m.boxes || [])" :key="'mb' + m.id + bi">
+              <div class="absolute border-2 border-red-500 bg-red-500/10 pointer-events-none" :style="boxStyle(b)"></div>
+              <div class="absolute min-w-4 h-4 px-1 rounded-sm bg-white border border-red-500 text-red-600 text-[10px] leading-4 font-bold flex items-center gap-1 pointer-events-none max-w-[70%] overflow-hidden whitespace-nowrap"
+                :style="badgeStyle(b)" :title="badgeTitle(bi, b)"><span class="shrink-0">{{ bi + 1 }}</span><span v-if="shortLabel(b)" class="truncate font-medium">{{ shortLabel(b) }}</span></div>
+            </template>
             <button v-if="hasTransform(m)" class="absolute bottom-1 right-1 z-10 px-1.5 py-0.5 text-[10px] rounded bg-black/60 text-white hover:bg-black/80"
               :title="showOrig[m.id] ? 'Показать отредактированную' : 'Показать оригинал (редактор тоже правит оригинал)'"
               @click="showOrig[m.id] = !showOrig[m.id]">{{ showOrig[m.id] ? 'правка' : 'оригинал' }}</button>
@@ -322,6 +327,26 @@ function boxStyle(b) {
 }
 function badgeStyle(b) {
   return { left: ((Number(b.x) || 0) * 100) + '%', top: ((Number(b.y) || 0) * 100) + '%' }
+}
+// Подпись поверх рамки: короткий текст из промпта, полный — в title.
+// Пусто — только номер как раньше.
+function shortLabel(b) {
+  const s = String(b?.label || '').trim()
+  if (!s) return ''
+  return s.length > 40 ? s.slice(0, 40) + '…' : s
+}
+function badgeTitle(i, b) {
+  const s = String(b?.label || '').trim()
+  return s ? `${i + 1}: ${s}` : String(i + 1)
+}
+// Рамки примеси — в координатах картинки ПОСЛЕ crop+rotation.
+// Показываем оверлей только когда видна трансформированная картинка:
+// без трансформ — обычный img (совпадает), с трансформ — canvas MixinThumb.
+// На оригинале с кропом координаты не совпадут — прячем, там пунктир кропа.
+function boxesVisible(m) {
+  if (!m || !(m.boxes || []).length) return false
+  if (!hasTransform(m)) return true
+  return !showOrig.value[m.id]
 }
 const boxScene = ref(null)
 const boxMixin = ref(null)
